@@ -3,7 +3,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1e293b">
+    <meta name="format-detection" content="telephone=no">
     <title>IronFlow Gym Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -12,7 +17,27 @@
     <style>
         :root {
             --app-height: 100%;
+            /* Mobile-first design tokens */
+            --mobile-padding: 1rem;
+            --tablet-padding: 1.5rem;
+            --desktop-padding: 2rem;
+            --touch-target-min: 44px;
+            --border-radius-mobile: 16px;
+            --border-radius-tablet: 20px;
+            --border-radius-desktop: 24px;
+            --shadow-mobile: 0 4px 12px rgba(0,0,0,0.08);
+            --shadow-tablet: 0 8px 24px rgba(0,0,0,0.12);
+            --shadow-desktop: 0 12px 32px rgba(0,0,0,0.15);
+            --font-size-mobile: 14px;
+            --font-size-tablet: 16px;
+            --font-size-desktop: 18px;
+            --safe-area-top: env(safe-area-inset-top, 0px);
+            --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+            --safe-area-left: env(safe-area-inset-left, 0px);
+            --safe-area-right: env(safe-area-inset-right, 0px);
         }
+            
+        /* Enhanced mobile-first base styles */
         html, body {
             height: 100%;
             width: 100%;
@@ -21,20 +46,89 @@
             overflow: hidden;
             overscroll-behavior: none;
             -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: manipulation;
         }
+            
         body { 
             font-family: 'Inter', sans-serif; 
             text-rendering: optimizeLegibility;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+            font-size: var(--font-size-mobile);
+            line-height: 1.5;
         }
+            
         #root {
             height: 100%;
             display: flex;
             flex-direction: column;
         }
+            
         .sidebar-item-active { background-color: rgba(59, 130, 246, 0.1); border-left: 4px solid #3b82f6; }
-        
+            
+        /* Comprehensive responsive breakpoints */
+        @media (max-width: 320px) {
+            :root {
+                --mobile-padding: 0.75rem;
+                --font-size-mobile: 13px;
+            }
+        }
+            
+        @media (min-width: 481px) and (max-width: 768px) {
+            :root {
+                --mobile-padding: var(--tablet-padding);
+                --font-size-mobile: var(--font-size-tablet);
+                --border-radius-mobile: var(--border-radius-tablet);
+                --shadow-mobile: var(--shadow-tablet);
+            }
+        }
+            
+        @media (min-width: 769px) and (max-width: 1024px) {
+            :root {
+                --mobile-padding: 1.25rem;
+                --font-size-mobile: 15px;
+            }
+        }
+            
+        @media (min-width: 1025px) {
+            :root {
+                --font-size-mobile: var(--font-size-desktop);
+                --border-radius-mobile: var(--border-radius-desktop);
+                --shadow-mobile: var(--shadow-desktop);
+            }
+        }
+            
+        /* Mobile optimization patterns */
+        @media (max-width: 768px) {
+            /* Prevent text zoom on orientation change */
+            html { -webkit-text-size-adjust: 100%; }
+                
+            /* Optimize for touch */
+            button, a, input, select, textarea {
+                min-height: var(--touch-target-min);
+                min-width: var(--touch-target-min);
+            }
+                
+            /* Reduce motion for accessibility */
+            @media (prefers-reduced-motion: reduce) {
+                *, *::before, *::after {
+                    animation-duration: 0.01ms !important;
+                    animation-iteration-count: 1 !important;
+                    transition-duration: 0.01ms !important;
+                }
+            }
+                
+            /* High contrast mode support */
+            @media (prefers-contrast: high) {
+                .bg-white { background-color: #ffffff !important; }
+                .text-gray-900 { color: #000000 !important; }
+                .border { border-color: #000000 !important; }
+            }
+        }
+            
         /* Smooth Scrollbars for Desktop */
         @media (min-width: 1024px) {
             ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -42,9 +136,27 @@
             ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
             ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
         }
-
+            
         /* Prevent text zoom on orientation change */
         html { -webkit-text-size-adjust: 100%; }
+            
+        /* Focus management for accessibility */
+        :focus-visible {
+            outline: 2px solid #3b82f6;
+            outline-offset: 2px;
+        }
+            
+        /* Loading states */
+        .loading-skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+        }
+            
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
     </style>
 <script type="importmap">
 {

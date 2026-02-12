@@ -1,10 +1,11 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAppContext } from '../AppContext';
 import { NAV_ITEMS } from '../constants';
 import { UserRole } from '../types';
 import NotificationBell from './NotificationBell';
+import { useMobileOptimization, useTouchOptimization, usePerformanceOptimization } from '../src/hooks/useMobileOptimization';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser, logout, branches, updateUser, showToast } = useAppContext();
@@ -13,6 +14,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  
+  // Mobile optimization hooks
+  const deviceInfo = useMobileOptimization();
+  const touchOptimization = useTouchOptimization();
+  const performanceOptimization = usePerformanceOptimization();
   
   const [accountData, setAccountData] = useState({ 
     name: currentUser?.name || '', 
@@ -90,14 +96,36 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
+  // Handle escape key for modal closing
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsAccountModalOpen(false);
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    if (isAccountModalOpen || isMobileMenuOpen) {
+      document.addEventListener('keydown', handleEscape);
+      // Prevent background scrolling
+      document.body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
+    };
+  }, [isAccountModalOpen, isMobileMenuOpen]);
+
   return (
-    <div className="flex h-full w-full overflow-hidden bg-gray-50 font-sans">
+    <div className={`flex h-full w-full overflow-hidden bg-gray-50 font-sans ${performanceOptimization.shouldReduceMotion ? 'motion-reduce' : ''}`}>
       
       {/* Mobile Sidebar Backdrop */}
       {isMobileMenuOpen && (
         <div 
           className="md:hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[55] transition-opacity animate-[fadeIn_0.2s_ease-out]"
           onClick={closeMobileMenu}
+          {...touchOptimization.touchHandlers}
         />
       )}
 
@@ -107,16 +135,21 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} 
         md:relative md:translate-x-0 md:flex flex-col shadow-2xl shrink-0
         ${isSidebarOpen ? 'w-72' : 'w-20'}
+        ${performanceOptimization.shouldReduceMotion ? 'transition-none' : ''}
       `}>
         {/* Sidebar Header */}
-        <div className="p-6 flex items-center justify-between border-b border-slate-800">
+        <div className="p-6 flex items-center justify-between border-b border-slate-800 safe-area-top">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 p-2 rounded-lg shrink-0">
+            <div className="bg-blue-600 p-2 rounded-lg shrink-0 touch-target">
               <i className="fas fa-dumbbell text-xl"></i>
             </div>
             {(isSidebarOpen || isMobileMenuOpen) && <span className="font-black text-lg tracking-widest uppercase truncate">IronFlow</span>}
           </div>
-          <button onClick={closeMobileMenu} className="md:hidden text-slate-400 hover:text-white">
+          <button 
+            onClick={closeMobileMenu} 
+            className="md:hidden text-slate-400 hover:text-white touch-target"
+            {...touchOptimization.touchHandlers}
+          >
             <i className="fas fa-times text-xl"></i>
           </button>
         </div>
@@ -130,7 +163,8 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 key={item.path}
                 to={item.path}
                 onClick={closeMobileMenu}
-                className={`flex items-center gap-4 px-6 py-4 hover:bg-slate-800 transition-all ${isActive ? 'bg-slate-800 border-l-4 border-blue-500 text-blue-400 font-bold' : 'text-slate-400'}`}
+                className={`flex items-center gap-4 px-6 py-4 hover:bg-slate-800 transition-all ${isActive ? 'bg-slate-800 border-l-4 border-blue-500 text-blue-400 font-bold' : 'text-slate-400'} touch-target`}
+                {...touchOptimization.touchHandlers}
               >
                 <span className="text-xl w-6 flex justify-center">{item.icon}</span>
                 {(isSidebarOpen || isMobileMenuOpen) && <span className="font-medium text-sm truncate">{item.label}</span>}
@@ -140,7 +174,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </nav>
 
         {/* Sidebar Bottom Actions */}
-        <div className="p-4 border-t border-slate-800 space-y-2">
+        <div className="p-4 border-t border-slate-800 space-y-2 safe-area-bottom">
           <button 
             onClick={() => {
               setAccountData({ 
@@ -151,14 +185,16 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               });
               setIsAccountModalOpen(true);
             }}
-            className={`w-full flex items-center gap-4 px-4 py-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all font-bold text-sm ${(!isSidebarOpen && !isMobileMenuOpen) && 'justify-center px-0'}`}
+            className={`w-full flex items-center gap-4 px-4 py-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all font-bold text-sm touch-target ${(!isSidebarOpen && !isMobileMenuOpen) && 'justify-center px-0'}`}
+            {...touchOptimization.touchHandlers}
           >
             <i className="fas fa-cog text-lg"></i>
             {(isSidebarOpen || isMobileMenuOpen) && <span>SETTINGS</span>}
           </button>
           <button 
             onClick={handleLogout}
-            className={`w-full flex items-center gap-4 px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all font-bold text-sm ${(!isSidebarOpen && !isMobileMenuOpen) && 'justify-center px-0'}`}
+            className={`w-full flex items-center gap-4 px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all font-bold text-sm touch-target ${(!isSidebarOpen && !isMobileMenuOpen) && 'justify-center px-0'}`}
+            {...touchOptimization.touchHandlers}
           >
             <i className="fas fa-sign-out-alt text-lg"></i>
             {(isSidebarOpen || isMobileMenuOpen) && <span>LOGOUT</span>}
@@ -168,21 +204,26 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
-        <header className="bg-white border-b h-16 md:h-20 flex items-center justify-between px-4 md:px-8 z-20 shadow-sm shrink-0">
+        <header className="bg-white border-b h-16 md:h-20 flex items-center justify-between px-4 md:px-8 z-20 shadow-sm shrink-0 safe-area-top">
           {/* Header Left: Navigation & Title */}
           <div className="flex items-center gap-3 md:gap-4 overflow-hidden min-w-0 flex-1">
             {/* Hamburger for Mobile */}
             <button 
               onClick={() => setIsMobileMenuOpen(true)} 
-              className="md:hidden text-slate-400 hover:text-slate-900 transition-colors p-2 hover:bg-slate-100 rounded-lg shrink-0"
+              className="md:hidden text-slate-400 hover:text-slate-900 transition-colors p-2 hover:bg-slate-100 rounded-lg shrink-0 touch-target"
+              {...touchOptimization.touchHandlers}
             >
               <i className="fas fa-bars text-xl"></i>
             </button>
             {/* Sidebar Toggle for Desktop */}
-            <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="hidden md:flex text-gray-400 hover:text-gray-900 transition-colors p-2 hover:bg-gray-100 rounded-lg shrink-0">
+            <button 
+              onClick={() => setSidebarOpen(!isSidebarOpen)} 
+              className="hidden md:flex text-gray-400 hover:text-gray-900 transition-colors p-2 hover:bg-gray-100 rounded-lg shrink-0 touch-target"
+              {...touchOptimization.touchHandlers}
+            >
               <i className={`fas ${isSidebarOpen ? 'fa-indent' : 'fa-outdent'} text-xl`}></i>
             </button>
-            <div className="bg-blue-600 p-1.5 rounded-lg md:hidden shrink-0">
+            <div className="bg-blue-600 p-1.5 rounded-lg md:hidden shrink-0 touch-target">
                <i className="fas fa-dumbbell text-white text-[10px]"></i>
             </div>
             <h1 className="text-sm md:text-lg font-black text-gray-800 tracking-tight truncate pr-2">
@@ -200,8 +241,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               </span>
             </div>
             <div 
-              className="relative group cursor-pointer shrink-0" 
+              className="relative group cursor-pointer shrink-0 touch-target" 
               onClick={() => setIsAccountModalOpen(true)}
+              {...touchOptimization.touchHandlers}
             >
               <img src={currentUser.avatar} alt="User" className="w-9 h-9 md:w-11 md:h-11 rounded-xl md:rounded-2xl border-2 border-white shadow-md object-cover transition-transform group-hover:scale-105" />
               <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
@@ -214,44 +256,53 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </main>
 
         {/* Bottom Quick-Nav for Mobile */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-gray-100 flex items-center justify-around px-1 py-3 z-50 shadow-[0_-10px_30px_rgba(0,0,0,0.08)] rounded-t-[2.5rem] safe-area-pb">
-           {mobileBottomNavItems.map(item => {
-             const isActive = location.pathname === item.path;
-             return (
-               <Link 
-                 key={item.path} 
-                 to={item.path} 
-                 className={`flex flex-col items-center gap-1 transition-all flex-1 min-w-0 ${isActive ? 'text-blue-600' : 'text-slate-500'}`}
-               >
-                 <span className={`text-[1.25rem] ${isActive ? 'scale-110' : ''}`}>{item.icon}</span>
-                 <span className={`text-[9px] font-black uppercase tracking-tight truncate w-full text-center px-1 ${isActive ? 'opacity-100' : 'opacity-70'}`}>
-                   {item.label}
-                 </span>
-                 {isActive && <span className="w-1.5 h-1.5 bg-blue-600 rounded-full mt-0.5 animate-pulse"></span>}
-               </Link>
-             );
-           })}
-           {/* "More" Trigger for the Sidebar Drawer */}
-           <button 
-             onClick={() => setIsMobileMenuOpen(true)} 
-             className="flex flex-col items-center gap-1 transition-all flex-1 min-w-0 text-slate-500"
-           >
-              <i className="fas fa-ellipsis-h text-[1.25rem]"></i>
-              <span className="text-[9px] font-black uppercase tracking-tight opacity-70">More</span>
-           </button>
-        </nav>
+        {deviceInfo.isMobile && (
+          <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-gray-100 flex items-center justify-around px-1 py-3 z-50 shadow-[0_-10px_30px_rgba(0,0,0,0.08)] rounded-t-[2.5rem] safe-area-pb">
+             {mobileBottomNavItems.map(item => {
+               const isActive = location.pathname === item.path;
+               return (
+                 <Link 
+                   key={item.path} 
+                   to={item.path} 
+                   className={`flex flex-col items-center gap-1 transition-all flex-1 min-w-0 touch-target ${isActive ? 'text-blue-600' : 'text-slate-500'}`}
+                   onClick={closeMobileMenu}
+                   {...touchOptimization.touchHandlers}
+                 >
+                   <span className={`text-[1.25rem] ${isActive ? 'scale-110' : ''}`}>{item.icon}</span>
+                   <span className={`text-[9px] font-black uppercase tracking-tight truncate w-full text-center px-1 ${isActive ? 'opacity-100' : 'opacity-70'}`}>
+                     {item.label}
+                   </span>
+                   {isActive && <span className="w-1.5 h-1.5 bg-blue-600 rounded-full mt-0.5 animate-pulse"></span>}
+                 </Link>
+               );
+             })}
+             {/* "More" Trigger for the Sidebar Drawer */}
+             <button 
+               onClick={() => setIsMobileMenuOpen(true)} 
+               className="flex flex-col items-center gap-1 transition-all flex-1 min-w-0 text-slate-500 touch-target"
+               {...touchOptimization.touchHandlers}
+             >
+                <i className="fas fa-ellipsis-h text-[1.25rem]"></i>
+                <span className="text-[9px] font-black uppercase tracking-tight opacity-70">More</span>
+             </button>
+          </nav>
+        )}
       </div>
 
       {/* Account Settings Modal */}
       {isAccountModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-[slideUp_0.3s_ease-out] max-h-[90dvh] flex flex-col">
-            <div className="bg-slate-900 p-6 md:p-8 text-white flex justify-between items-center shrink-0">
+            <div className="bg-slate-900 p-6 md:p-8 text-white flex justify-between items-center shrink-0 safe-area-top">
               <div>
                 <h3 className="text-xl font-black uppercase tracking-tight">Account Profile</h3>
                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Manage your identity</p>
               </div>
-              <button onClick={() => setIsAccountModalOpen(false)} className="bg-white/10 p-2 rounded-xl hover:bg-white/20 transition-colors">
+              <button 
+                onClick={() => setIsAccountModalOpen(false)} 
+                className="bg-white/10 p-2 rounded-xl hover:bg-white/20 transition-colors touch-target"
+                {...touchOptimization.touchHandlers}
+              >
                 <i className="fas fa-times"></i>
               </button>
             </div>
@@ -262,9 +313,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   <i className="fas fa-user absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
                   <input 
                     required 
-                    className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                    className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold input-mobile"
                     value={accountData.name}
                     onChange={e => setAccountData({...accountData, name: e.target.value})}
+                    {...touchOptimization.touchHandlers}
                   />
                 </div>
               </div>
@@ -274,11 +326,12 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 <div className="relative">
                   <i className="fas fa-map-marker-alt absolute left-4 top-4 text-slate-300"></i>
                   <textarea 
-                    className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm"
+                    className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm input-mobile"
                     value={accountData.address}
                     onChange={e => setAccountData({...accountData, address: e.target.value})}
                     placeholder="Residential Address"
                     rows={2}
+                    {...touchOptimization.touchHandlers}
                   />
                 </div>
               </div>
@@ -292,10 +345,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   <input 
                     required 
                     type="tel"
-                    className="w-full p-4 pl-12 bg-red-50 border border-red-100 text-red-700 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 font-black"
+                    className="w-full p-4 pl-12 bg-red-50 border border-red-100 text-red-700 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 font-black input-mobile"
                     value={accountData.emergencyContact}
                     onChange={e => setAccountData({...accountData, emergencyContact: e.target.value})}
                     placeholder="+91 XXXXX XXXXX"
+                    {...touchOptimization.touchHandlers}
                   />
                 </div>
               </div>
@@ -307,9 +361,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   <input 
                     required 
                     type="email"
-                    className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                    className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold input-mobile"
                     value={accountData.email}
                     onChange={e => setAccountData({...accountData, email: e.target.value})}
+                    {...touchOptimization.touchHandlers}
                   />
                 </div>
               </div>
@@ -329,10 +384,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                         type="password"
                         required
                         minLength={6}
-                        className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                        className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold input-mobile"
                         value={passwordData.newPassword}
                         onChange={e => setPasswordData({...passwordData, newPassword: e.target.value})}
                         placeholder="Min 6 characters"
+                        {...touchOptimization.touchHandlers}
                       />
                     </div>
                   </div>
@@ -345,10 +401,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                         type="password"
                         required
                         minLength={6}
-                        className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                        className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold input-mobile"
                         value={passwordData.confirmPassword}
                         onChange={e => setPasswordData({...passwordData, confirmPassword: e.target.value})}
                         placeholder="Confirm password"
+                        {...touchOptimization.touchHandlers}
                       />
                     </div>
                   </div>
@@ -356,7 +413,8 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   <button 
                     type="submit" 
                     disabled={isChangingPassword}
-                    className="w-full py-3 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="w-full py-3 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 touch-target"
+                    {...touchOptimization.touchHandlers}
                   >
                     {isChangingPassword ? (
                       <><i className="fas fa-spinner fa-spin"></i> UPDATING...</>
@@ -367,17 +425,19 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </form>
               </div>
 
-              <div className="pt-4 space-y-3 shrink-0 border-t border-slate-200">
+              <div className="pt-4 space-y-3 shrink-0 border-t border-slate-200 safe-area-bottom">
                 <button 
                   type="submit" 
-                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95"
+                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 touch-target"
+                  {...touchOptimization.touchHandlers}
                 >
                   SAVE PROFILE CHANGES
                 </button>
                 <button 
                   type="button"
                   onClick={handleLogout}
-                  className="w-full py-3 bg-red-50 text-red-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all"
+                  className="w-full py-3 bg-red-50 text-red-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all touch-target"
+                  {...touchOptimization.touchHandlers}
                 >
                   LOGOUT SESSION
                 </button>
@@ -391,7 +451,16 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .safe-area-pb { padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)); }
+        .safe-area-pb { padding-bottom: calc(0.75rem + var(--safe-area-bottom)); }
+        
+        /* Performance optimizations */
+        ${performanceOptimization.shouldReduceMotion ? `
+          *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+          }
+        ` : ''}
       `}</style>
     </div>
   );

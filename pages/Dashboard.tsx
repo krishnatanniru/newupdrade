@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAppContext } from '../AppContext';
 import { UserRole, PlanType, SubscriptionStatus } from '../types';
 import { 
@@ -15,7 +15,9 @@ const formatCurrency = (amount: number) => {
 };
 
 const Dashboard: React.FC = () => {
-  const { currentUser, subscriptions, plans, sales, users, attendance, metrics } = useAppContext();
+  const { currentUser, subscriptions, plans, sales, users, attendance, metrics, sendNotification, showToast } = useAppContext();
+  const [timeFilter, setTimeFilter] = useState<'7' | '15' | '30' | '60'>('30');
+  const [statusFilter, setStatusFilter] = useState<'EXPIRING' | 'EXPIRED' | 'ALL'>('EXPIRING');
 
   if (!currentUser) return null;
 
@@ -30,6 +32,130 @@ const Dashboard: React.FC = () => {
   const filteredSales = currentUser?.role === UserRole.SUPER_ADMIN
     ? sales
     : sales.filter(s => s.branchId === currentUser?.branchId);
+
+  // Membership Expiry Tracking
+  const today = new Date();
+  
+  const getExpiringMemberships = () => {
+    return filteredSubs.filter(sub => {
+      const user = users.find(u => u.id === sub.memberId);
+      if (!user || user.role !== UserRole.MEMBER) return false;
+      
+      // Status filtering
+      if (statusFilter === 'EXPIRED' && sub.status !== SubscriptionStatus.EXPIRED) return false;
+      if (statusFilter === 'EXPIRING' && sub.status !== SubscriptionStatus.ACTIVE) return false;
+      
+      const endDate = new Date(sub.endDate);
+      const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (statusFilter === 'EXPIRED') {
+        return endDate.getTime() < today.getTime();
+      }
+      
+      if (statusFilter === 'EXPIRING') {
+        return daysUntilExpiry >= 0 && daysUntilExpiry <= parseInt(timeFilter);
+      }
+      
+      return true;
+    });
+  };
+
+  const expiringMemberships = getExpiringMemberships();
+  
+  // Calculate summary statistics
+  const expiredMemberships = expiringMemberships.filter(sub => {
+    const endDate = new Date(sub.endDate);
+    return endDate.getTime() < today.getTime();
+  });
+  
+  const expiringToday = expiringMemberships.filter(sub => {
+    const endDate = new Date(sub.endDate);
+    const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    return daysUntilExpiry === 0;
+  });
+  
+  const expiringThisWeek = expiringMemberships.filter(sub => {
+    const endDate = new Date(sub.endDate);
+    const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    return daysUntilExpiry > 0 && daysUntilExpiry <= 7;
+  });
+  
+  const expiringThisMonth = expiringMemberships.filter(sub => {
+    const endDate = new Date(sub.endDate);
+    const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    return daysUntilExpiry > 7 && daysUntilExpiry <= 30;
+  });
+
+  // Send renewal notification
+  const sendRenewalNotification = async (subscription: any) => {
+    try {
+      const user = users.find(u => u.id === subscription.memberId)!;
+      const plan = plans.find(p => p.id === subscription.planId)!;
+      const endDate = new Date(subscription.endDate);
+      const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+      await sendNotification({
+        userId: user.id,
+        type: 'SMS',
+        recipient: 'In-App',
+        subject: `💳 Membership Renewal Reminder`,
+        body: `Your ${plan.name} membership ${daysUntilExpiry <= 0 ? 'has expired' : `expires in ${daysUntilExpiry} days`} (${subscription.endDate}). Renew now to continue enjoying uninterrupted access! Contact your branch for special renewal offers.`,
+        category: 'REMINDER',
+        branchId: subscription.branchId
+      });
+      showToast(`Renewal reminder sent to ${user.name}`, 'success');
+    } catch (error) {
+      showToast('Failed to send notification', 'error');
+    }
+  };
+
+  // Bulk send notifications
+  const sendBulkNotifications = async () => {
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const sub of expiringMemberships) {
+      try {
+        const user = users.find(u => u.id === sub.memberId)!;
+        const plan = plans.find(p => p.id === sub.planId)!;
+        const endDate = new Date(sub.endDate);
+        const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+        await sendNotification({
+          userId: user.id,
+          type: 'SMS',
+          recipient: 'In-App',
+          subject: `💳 Membership Status Update`,
+          body: `Your ${plan.name} membership ${daysUntilExpiry <= 0 ? 'has expired' : `expires in ${daysUntilExpiry} days`} (${sub.endDate}). Don't miss out on your fitness journey - renew today!`,
+          category: 'REMINDER',
+          branchId: sub.branchId
+        });
+        successCount++;
+      } catch (error) {
+        errorCount++;
+      }
+    }
+
+    showToast(`Sent ${successCount} notifications (${errorCount} failed)`, 
+      errorCount > 0 ? 'warning' : 'success');
+  };
+
+  // Get status badge color
+  const getStatusColor = (days: number, isExpired: boolean) => {
+    if (isExpired || days < 0) return 'bg-red-100 text-red-800';
+    if (days <= 3) return 'bg-red-100 text-red-800';
+    if (days <= 7) return 'bg-orange-100 text-orange-800';
+    if (days <= 14) return 'bg-yellow-100 text-yellow-800';
+    return 'bg-green-100 text-green-800';
+  };
+
+  // Get status text
+  const getStatusText = (days: number, isExpired: boolean) => {
+    if (isExpired || days < 0) return 'EXPIRED';
+    if (days === 0) return 'EXPIRES TODAY';
+    if (days === 1) return 'EXPIRES TOMORROW';
+    return `EXPIRES IN ${days} DAYS`;
+  };
 
   // TRAINER DASHBOARD
   if (isTrainer) {
@@ -195,8 +321,174 @@ const Dashboard: React.FC = () => {
 
   const recentTransactions = [...filteredSales].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 5);
 
+  // ADMIN DASHBOARD WITH EXPIRY TRACKING
   return (
     <div className="space-y-6 md:space-y-8 animate-[fadeIn_0.5s_ease-out]">
+      {/* Membership Expiry Summary Section */}
+      {isAdmin && (
+        <div className="space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">Membership Expiry Tracker</h3>
+              <p className="text-gray-500">Monitor upcoming membership expirations</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={sendBulkNotifications}
+                disabled={expiringMemberships.length === 0}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <i className="fas fa-paper-plane"></i>
+                Send Bulk Notifications ({expiringMemberships.length})
+              </button>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="bg-white p-6 rounded-2xl shadow-sm border">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Time Frame</label>
+                <select
+                  value={timeFilter}
+                  onChange={(e) => setTimeFilter(e.target.value as any)}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="7">Next 7 Days</option>
+                  <option value="15">Next 15 Days</option>
+                  <option value="30">Next 30 Days</option>
+                  <option value="60">Next 60 Days</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Status</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as any)}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="EXPIRING">Expiring Soon</option>
+                  <option value="EXPIRED">Expired</option>
+                  <option value="ALL">All Memberships</option>
+                </select>
+              </div>
+              
+              <div className="flex items-end">
+                <div className="bg-blue-50 p-3 rounded-lg w-full">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">{expiringMemberships.length}</div>
+                    <div className="text-sm text-blue-800 font-bold">Members Found</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-red-600">{expiredMemberships.length}</div>
+                  <div className="text-sm text-red-800 font-bold">Expired</div>
+                </div>
+                <i className="fas fa-exclamation-circle text-red-500 text-xl"></i>
+              </div>
+            </div>
+            
+            <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-orange-600">{expiringToday.length}</div>
+                  <div className="text-sm text-orange-800 font-bold">Expiring Today</div>
+                </div>
+                <i className="fas fa-bolt text-orange-500 text-xl"></i>
+              </div>
+            </div>
+            
+            <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-yellow-600">{expiringThisWeek.length}</div>
+                  <div className="text-sm text-yellow-800 font-bold">Expiring This Week</div>
+                </div>
+                <i className="fas fa-clock text-yellow-500 text-xl"></i>
+              </div>
+            </div>
+            
+            <div className="bg-green-50 p-4 rounded-xl border border-green-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-green-600">{expiringThisMonth.length}</div>
+                  <div className="text-sm text-green-800 font-bold">Expiring This Month</div>
+                </div>
+                <i className="fas fa-calendar-check text-green-500 text-xl"></i>
+              </div>
+            </div>
+          </div>
+
+          {/* Detailed List */}
+          {expiringMemberships.length > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+              <div className="bg-gray-50 px-6 py-4 border-b">
+                <h4 className="font-bold text-gray-900">Expiring Memberships ({expiringMemberships.length})</h4>
+              </div>
+              <div className="divide-y">
+                {expiringMemberships.map((sub) => {
+                  const user = users.find(u => u.id === sub.memberId)!;
+                  const plan = plans.find(p => p.id === sub.planId)!;
+                  const endDate = new Date(sub.endDate);
+                  const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                  const isExpired = endDate.getTime() < today.getTime();
+
+                  return (
+                    <div key={sub.id} className="p-6 hover:bg-gray-50 transition-colors">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                          <img 
+                            src={user.avatar} 
+                            alt={user.name}
+                            className="w-12 h-12 rounded-full object-cover border-2 border-gray-200"
+                          />
+                          <div>
+                            <h5 className="font-bold text-gray-900">{user.name}</h5>
+                            <p className="text-sm text-gray-500">{user.email}</p>
+                            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">
+                              {plan.name} • {user.phone}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex flex-col md:flex-row md:items-center gap-4">
+                          <div className="text-center md:text-right">
+                            <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${getStatusColor(daysUntilExpiry, isExpired)}`}>
+                              <i className={`fas ${isExpired ? 'fa-exclamation-circle' : 'fa-clock'} mr-1`}></i>
+                              {getStatusText(daysUntilExpiry, isExpired)}
+                            </div>
+                            <div className="text-sm text-gray-500 mt-1">
+                              Expires: {sub.endDate}
+                            </div>
+                          </div>
+                          
+                          <button
+                            onClick={() => sendRenewalNotification(sub)}
+                            className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors flex items-center gap-1"
+                          >
+                            <i className="fas fa-bell"></i>
+                            Notify
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Stats Grid - Ultra Responsive */}
       <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         <StatCard title="Members" value={filteredSubs.length} icon="fa-users" color="blue" />

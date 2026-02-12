@@ -23,6 +23,7 @@ import TaxCenter from './pages/TaxCenter';
 import MyEarnings from './pages/MyEarnings';
 import WalkInManagement from './pages/WalkInManagement';
 import Holidays from './pages/Holidays';
+import MobileTestingPanel from './components/MobileTestingPanel';
 
 const AppRoutes: React.FC = () => {
   const { currentUser } = useAppContext();
@@ -69,6 +70,7 @@ const App: React.FC = () => {
     <AppProvider>
       <Router>
         <AppRoutes />
+        <MobileTestingPanel />
       </Router>
     </AppProvider>
   );
