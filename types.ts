@@ -303,3 +303,13 @@ export interface PayrollRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface Kiosk {
+  id: string;
+  branchId: string;
+  name: string;
+  location: string;
+  isActive: boolean;
+  createdAt: string;
+  createdBy: string;
+}

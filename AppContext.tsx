@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User, Branch, Plan, Subscription, Sale, Attendance, Booking, Feedback, UserRole, SubscriptionStatus, Communication, CommType, InventoryItem, BodyMetric, Offer, ClassSession, Expense, Holiday } from './types';
+import { User, Branch, Plan, Subscription, Sale, Attendance, Booking, Feedback, UserRole, SubscriptionStatus, Communication, CommType, InventoryItem, BodyMetric, Offer, ClassSession, Expense, Holiday, Kiosk } from './types';
 import { MOCK_USERS, BRANCHES, MOCK_PLANS, MOCK_SUBSCRIPTIONS, MOCK_OFFERS, MOCK_ATTENDANCE, MOCK_SALES, MOCK_BOOKINGS } from './constants';
 import { GoogleGenAI } from "@google/genai";
 import { supabase } from './src/lib/supabase';
@@ -22,10 +22,14 @@ interface AppContextType {
   classSchedules: ClassSession[];
   expenses: Expense[];
   holidays: Holiday[];
+  kiosks: Kiosk[];
   addHoliday: (holiday: Holiday, sendNotificationToUsers?: boolean) => Promise<void>;
   deleteHoliday: (id: string) => Promise<void>;
   sendHolidayNotification: (holiday: Holiday) => Promise<void>;
   sendBranchNotification: (branchId: string, subject: string, message: string, targetRoles?: UserRole[]) => Promise<void>;
+  addKiosk: (kiosk: Kiosk) => Promise<void>;
+  updateKiosk: (id: string, updates: Partial<Kiosk>) => Promise<void>;
+  deleteKiosk: (id: string) => Promise<void>;
   settlementRate: number;
   setSettlementRate: (rate: number) => void;
   isGlobalLoading: boolean;
@@ -91,6 +95,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [classSchedules, setClassSchedules] = useState<ClassSession[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [kiosks, setKiosks] = useState<Kiosk[]>([]);
   const [settlementRate, setSettlementRate] = useState<number>(250);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isGlobalLoading, setGlobalLoading] = useState(false);
@@ -244,6 +249,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { data: hData } = await supabase.from('holidays').select('*');
       if (hData) setHolidays(hData);
 
+      const { data: kData } = await supabase.from('kiosks').select('*');
+      if (kData) setKiosks(kData);
+
     } catch (error) {
       console.error('Error fetching data:', error);
       showToast('Error connecting to database', 'error');
@@ -277,6 +285,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'holidays' }, () => {
          supabase.from('holidays').select('*').then(({ data }) => { if (data) setHolidays(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'kiosks' }, () => {
+         supabase.from('kiosks').select('*').then(({ data }) => { if (data) setKiosks(data); });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, () => {
          supabase.from('inventory').select('*').then(({ data }) => { if (data) setInventory(data); });
@@ -598,6 +609,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const { error } = await supabase.from('class_schedules').delete().eq('id', id);
     if (!error) setClassSchedules(prev => prev.filter(s => s.id !== id));
     else showToast('Failed to cancel class', 'error');
+  };
+
+  const addKiosk = async (kiosk: Kiosk) => {
+    const { error } = await supabase.from('kiosks').insert(kiosk);
+    if (!error) {
+      setKiosks(prev => [...prev, kiosk]);
+      showToast('Kiosk added successfully');
+    } else showToast('Failed to add kiosk', 'error');
+  };
+
+  const updateKiosk = async (id: string, updates: Partial<Kiosk>) => {
+    const { error } = await supabase.from('kiosks').update(updates).eq('id', id);
+    if (!error) setKiosks(prev => prev.map(k => k.id === id ? { ...k, ...updates } : k));
+    else showToast('Failed to update kiosk', 'error');
+  };
+
+  const deleteKiosk = async (id: string) => {
+    const { error } = await supabase.from('kiosks').delete().eq('id', id);
+    if (!error) setKiosks(prev => prev.filter(k => k.id !== id));
+    else showToast('Failed to delete kiosk', 'error');
   };
 
   const addExpense = async (expense: Expense) => {
@@ -983,7 +1014,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       attendance, bookings, feedback, communications, inventory, metrics, offers,
       classSchedules, addClassTemplate, deleteClassTemplate, generateUpcomingClasses, addClassSession, deleteClassSession,
       expenses, addExpense, deleteExpense,
-      holidays, addHoliday, deleteHoliday, sendHolidayNotification, sendBranchNotification,
+      holidays, kiosks, addHoliday, deleteHoliday, sendHolidayNotification, sendBranchNotification,
+      addKiosk, updateKiosk, deleteKiosk,
       settlementRate, setSettlementRate, isGlobalLoading, setGlobalLoading,
       addBranch, updateBranch, addUser, updateUser, deleteUser, addPlan, updatePlan,
       addSubscription, addSale, recordAttendance, updateAttendance, addBooking, addFeedback, updateFeedbackStatus,
@@ -992,8 +1024,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       {children}
       {toast && (
         <div className={`fixed bottom-8 right-8 px-6 py-4 rounded-2xl shadow-2xl z-[9999] flex items-center gap-3 animate-[slideLeft_0.3s_ease-out] text-white font-bold ${toast.type === 'error' ? 'bg-red-600' : 'bg-slate-900'}`}>
-          <i className={`fas ${toast.type === 'error' ? 'fa-exclamation-circle' : 'fa-check-circle'} text-xl`}></i>
-          {toast.message}
+            <i className={`fas ${toast.type === 'error' ? 'fa-exclamation-circle' : 'fa-check-circle'} text-xl`}></i>
+            {toast.message}
         </div>
       )}
       {isGlobalLoading && (

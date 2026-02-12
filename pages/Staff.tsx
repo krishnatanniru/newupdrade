@@ -170,12 +170,14 @@ const Staff: React.FC = () => {
           <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight uppercase">Staff Directory</h2>
           <p className="text-gray-500 font-medium text-sm">Monitor multiple shifts and team attendance logs</p>
         </div>
+        {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
         <button 
           onClick={handleOpenAdd}
           className="w-full sm:w-auto bg-blue-600 text-white px-6 py-3 md:py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
         >
           <i className="fas fa-user-plus"></i> ADD STAFF
         </button>
+        )}
       </div>
 
       <div className="bg-white rounded-[2.5rem] border shadow-sm overflow-hidden">
@@ -255,6 +257,7 @@ const Staff: React.FC = () => {
                       </td>
                       <td className="px-6 py-5 text-right pr-8">
                         <div className="flex justify-end gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                           <button 
                             onClick={() => handleOpenPayroll(staff)}
                             className="p-2.5 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
@@ -262,6 +265,7 @@ const Staff: React.FC = () => {
                           >
                             <i className="fas fa-file-invoice-dollar"></i>
                           </button>
+                          )}
                           <button 
                             onClick={() => handleOpenLogs(staff)}
                             className="p-2.5 text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
@@ -269,6 +273,7 @@ const Staff: React.FC = () => {
                           >
                             <i className="fas fa-clock-rotate-left"></i>
                           </button>
+                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                           <button 
                             onClick={() => handleOpenEdit(staff)}
                             className="p-2.5 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
@@ -276,6 +281,8 @@ const Staff: React.FC = () => {
                           >
                             <i className="fas fa-user-pen"></i>
                           </button>
+                          )}
+                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                           <button 
                             onClick={() => handleDeleteStaff(staff.id)}
                             className="p-2.5 text-red-600 hover:bg-red-50 rounded-xl transition-all"
@@ -283,6 +290,7 @@ const Staff: React.FC = () => {
                           >
                             <i className="fas fa-trash-can"></i>
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>

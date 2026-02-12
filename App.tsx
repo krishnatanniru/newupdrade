@@ -23,6 +23,8 @@ import TaxCenter from './pages/TaxCenter';
 import MyEarnings from './pages/MyEarnings';
 import WalkInManagement from './pages/WalkInManagement';
 import Holidays from './pages/Holidays';
+import KioskManagement from './pages/KioskManagement';
+import KioskCheckIn from './pages/KioskCheckIn';
 import MobileTestingPanel from './components/MobileTestingPanel';
 
 const AppRoutes: React.FC = () => {
@@ -52,12 +54,14 @@ const AppRoutes: React.FC = () => {
         <Route path="/sales" element={<Sales />} />
         <Route path="/feedback" element={<Feedback />} />
         <Route path="/check-in" element={<CheckIn />} />
+        <Route path="/kiosk-check-in" element={<KioskCheckIn />} />
         <Route path="/portal" element={<MemberPortal />} />
         <Route path="/store" element={<MembershipStore />} />
         <Route path="/bookings" element={<Bookings />} />
         <Route path="/comms" element={<Communications />} />
         <Route path="/tax" element={<TaxCenter />} />
         <Route path="/my-earnings" element={<MyEarnings />} />
+        <Route path="/kiosks" element={<KioskManagement />} />
         <Route path="/holidays" element={<Holidays />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
