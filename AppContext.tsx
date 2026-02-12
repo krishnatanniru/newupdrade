@@ -79,8 +79,25 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUserState] = useState<User | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
+  
+  // Enhanced setCurrentUser that also manages session storage
+  const setCurrentUser = useCallback((user: User | null) => {
+    if (user) {
+      // Create session for authenticated user (8 hours expiry)
+      const session = {
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString()
+      };
+      localStorage.setItem('ironflow_session', JSON.stringify(session));
+      setCurrentUserState(user);
+    } else {
+      // Clear session on logout
+      localStorage.removeItem('ironflow_session');
+      setCurrentUserState(null);
+    }
+  }, []);
   const [users, setUsers] = useState<User[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -125,7 +142,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             // Session valid, find user
             const user = users.find(u => u.id === parsed.userId);
             if (user) {
-              setCurrentUser(user);
+              setCurrentUserState(user);
             } else {
               localStorage.removeItem('ironflow_session');
             }
@@ -139,8 +156,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     
+    // Always check session, but handle the timing properly
     if (users.length > 0) {
       checkSession();
+    } else {
+      // Set up a listener for when users are loaded
+      const interval = setInterval(() => {
+        if (users.length > 0) {
+          checkSession();
+          clearInterval(interval);
+        }
+      }, 100);
+      
+      // Cleanup
+      return () => clearInterval(interval);
     }
   }, [users]);
 
