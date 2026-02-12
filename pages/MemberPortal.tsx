@@ -55,6 +55,17 @@ const MemberPortal: React.FC = () => {
   const currentBranch = branches.find(b => b.id === currentUser.branchId);
   const equipmentList = currentBranch?.equipment || "Bodyweight exercises only.";
 
+  const getTermsContent = () => {
+    if (currentBranch?.termsAndConditions) {
+      return (
+        <div className="prose prose-slate max-w-none space-y-6 text-sm text-slate-600 leading-relaxed font-medium">
+          <div dangerouslySetInnerHTML={{ __html: currentBranch.termsAndConditions.replace(/\n/g, '<br />') }} />
+        </div>
+      );
+    }
+    return TERMS_CONTENT; // fallback to default terms
+  };
+
   const handleAcceptTerms = () => {
     if (!agreedToTerms) {
       showToast('Please confirm your agreement by checking the box.', 'error');
@@ -86,7 +97,7 @@ const MemberPortal: React.FC = () => {
            </div>
            
            <div className="p-6 md:p-10 max-h-[350px] overflow-y-auto bg-slate-50/50 border-b border-slate-100" onScroll={handleScroll}>
-              {TERMS_CONTENT}
+              {getTermsContent()}
            </div>
 
            <div className="p-8 md:p-10 bg-white">

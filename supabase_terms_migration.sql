@@ -1,0 +1,26 @@
+-- Add termsAndConditions column to branches table
+ALTER TABLE branches 
+ADD COLUMN IF NOT EXISTS terms_and_conditions TEXT;
+
+-- Add a default terms and conditions for existing branches
+UPDATE branches 
+SET terms_and_conditions = '# IronFlow Gym Terms and Conditions
+
+## 1. Health and Safety Disclaimer
+By using IronFlow facilities, you acknowledge that physical exercise carries inherent risks. You represent that you are in good physical condition and have no medical reason that would prevent you from using the equipment. Always consult a physician before starting a new program.
+
+## 2. AI Coaching and Personal Data
+The "Smart AI Coach" utilizes Google Gemini. AI-generated workouts are for informational purposes only. You are responsible for executing exercises with proper form. IronFlow logs metrics (weight, goals) to provide a personalized experience.
+
+## 3. Membership Rules
+Your unique QR Gate Key (IF-ID) is non-transferable. Sharing credentials results in immediate suspension. Members must follow gym etiquette and re-rack weights after use.
+
+## 4. Liability Waiver
+IronFlow Gym shall not be liable for any injury, loss, or damage to person or property arising out of the use of gym facilities or participation in training sessions.
+
+## 5. Branch-Specific Terms
+Additional terms may apply based on your specific branch location and local regulations.'
+WHERE terms_and_conditions IS NULL;
+
+-- Create index for better performance
+CREATE INDEX IF NOT EXISTS idx_branches_terms ON branches(terms_and_conditions);

@@ -47,7 +47,8 @@ const Branches: React.FC = () => {
     equipment: '',
     latitude: 0,
     longitude: 0,
-    geofenceRadius: 100
+    geofenceRadius: 100,
+    termsAndConditions: ''
   });
 
   const getBranchStats = (branchId: string) => {
@@ -105,7 +106,8 @@ const Branches: React.FC = () => {
       equipment: branch.equipment || '',
       latitude: branch.latitude || 0,
       longitude: branch.longitude || 0,
-      geofenceRadius: branch.geofenceRadius || 100
+      geofenceRadius: branch.geofenceRadius || 100,
+      termsAndConditions: branch.termsAndConditions || ''
     });
     setModalOpen(true);
   };
@@ -363,6 +365,23 @@ const Branches: React.FC = () => {
                   className="w-full p-4 bg-blue-50/30 border border-blue-100 rounded-2xl outline-none text-xs font-medium"
                   value={formData.equipment}
                   onChange={e => setFormData({...formData, equipment: e.target.value})}
+                ></textarea>
+              </section>
+
+              <section className="space-y-3 pt-6 border-t">
+                <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest flex items-center gap-2">
+                  <i className="fas fa-file-contract"></i> Custom Terms & Conditions
+                </label>
+                <p className="text-[9px] text-slate-400 italic">Branch-specific terms that members must accept. Uses Markdown format.</p>
+                <textarea 
+                  rows={8}
+                  placeholder="# Branch Terms and Conditions
+
+## Section 1
+Your custom terms here..."
+                  className="w-full p-4 bg-purple-50/30 border border-purple-100 rounded-2xl outline-none text-xs font-medium"
+                  value={formData.termsAndConditions}
+                  onChange={e => setFormData({...formData, termsAndConditions: e.target.value})}
                 ></textarea>
               </section>
 

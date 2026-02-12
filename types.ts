@@ -80,6 +80,7 @@ export interface Branch {
   latitude?: number;
   longitude?: number;
   geofenceRadius?: number;
+  termsAndConditions?: string;
 }
 
 export interface Shift {
