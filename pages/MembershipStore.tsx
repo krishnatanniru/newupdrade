@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../AppContext';
 import { PlanType, SubscriptionStatus, Plan, UserRole } from '../types';
+import { PaymentModal } from '../components/PaymentModal';
 
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -18,6 +19,9 @@ const MembershipStore: React.FC = () => {
   const [selectedPlanForCheckout, setSelectedPlanForCheckout] = useState<Plan | null>(null);
   const [selectedMethod, setSelectedMethod] = useState<'UPI' | 'CARD' | 'NETBANKING'>('UPI');
   const [assignedTrainerId, setAssignedTrainerId] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [pendingPlan, setPendingPlan] = useState<Plan | null>(null);
 
   if (!currentUser) return null;
 
@@ -38,28 +42,56 @@ const MembershipStore: React.FC = () => {
       showToast("Base Gym Membership required before buying Add-ons.", "error");
       return;
     }
-    setSelectedPlanForCheckout(plan);
-    setSelectedMethod('UPI');
-    setAssignedTrainerId('');
-  };
-
-  const handleFinalPayment = () => {
-    if (!selectedPlanForCheckout) return;
     
-    // Validate trainer selection for PT
-    if (selectedPlanForCheckout.type === PlanType.PT && !assignedTrainerId) {
-      showToast("Please select a trainer for your Personal Training sessions.", "error");
+    // For PT and Group plans, show checkout modal with trainer selection
+    if (plan.type === PlanType.PT || plan.type === PlanType.GROUP) {
+      setSelectedPlanForCheckout(plan);
+      setSelectedMethod('UPI');
+      setAssignedTrainerId('');
+      setStartDate(new Date().toISOString().split('T')[0]);
       return;
     }
-
-    setIsProcessing(true);
     
-    setTimeout(() => {
-      purchaseSubscription(currentUser.id, selectedPlanForCheckout.id, selectedMethod === 'CARD' ? 'CARD' : 'ONLINE', assignedTrainerId || undefined);
-      setIsProcessing(false);
-      setSelectedPlanForCheckout(null);
-      showToast(`Payment successful! Welcome to the program.`, 'success');
-    }, 2000);
+    // For Gym plans, open Razorpay payment modal directly
+    setPendingPlan(plan);
+    setIsPaymentModalOpen(true);
+  };
+  
+  const handleProceedToPayment = () => {
+    if (!selectedPlanForCheckout) return;
+    
+    // Validate trainer selection for PT and Group plans
+    if ((selectedPlanForCheckout.type === PlanType.PT || selectedPlanForCheckout.type === PlanType.GROUP) && !assignedTrainerId) {
+      showToast("Please select a trainer for your sessions.", "error");
+      return;
+    }
+    
+    setPendingPlan(selectedPlanForCheckout);
+    setSelectedPlanForCheckout(null); // Close checkout modal
+    setIsPaymentModalOpen(true);
+  };
+
+  const handlePaymentSuccess = (paymentId: string) => {
+    if (!pendingPlan) return;
+    
+    purchaseSubscription(
+      currentUser.id, 
+      pendingPlan.id, 
+      'ONLINE', 
+      assignedTrainerId || undefined,
+      startDate
+    );
+    
+    setIsPaymentModalOpen(false);
+    setSelectedPlanForCheckout(null);
+    setPendingPlan(null);
+    setAssignedTrainerId('');
+    setStartDate(new Date().toISOString().split('T')[0]);
+    showToast(`Payment successful! ID: ${paymentId}`, 'success');
+  };
+  
+  const handlePaymentError = (error: any) => {
+    showToast(error?.message || 'Payment failed. Please try again.', 'error');
   };
 
   const getProviderBranding = () => {
@@ -160,7 +192,11 @@ const MembershipStore: React.FC = () => {
                   <p className="text-[11px] text-white/80 font-medium tracking-tight uppercase">Checkout via {branding.name}</p>
                </div>
                <button 
-                onClick={() => setSelectedPlanForCheckout(null)}
+                onClick={() => {
+                  setSelectedPlanForCheckout(null);
+                  setAssignedTrainerId('');
+                  setStartDate(new Date().toISOString().split('T')[0]);
+                }}
                 className="bg-black/10 hover:bg-black/20 p-2 rounded-lg transition-colors"
                >
                  <i className="fas fa-times"></i>
@@ -192,6 +228,21 @@ const MembershipStore: React.FC = () => {
                 </div>
               )}
 
+              {/* Start Date Selection */}
+              <div className="space-y-3 p-5 bg-green-50/50 rounded-2xl border border-green-100/50">
+                <label className="text-[10px] font-black text-green-600 uppercase tracking-widest ml-1 flex items-center gap-2">
+                  <i className="fas fa-calendar-alt"></i> Membership Start Date
+                </label>
+                <input 
+                  type="date" 
+                  required
+                  className="w-full p-4 bg-white border border-green-100 rounded-xl outline-none font-bold text-sm"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                />
+                <p className="text-[9px] text-green-500 font-bold uppercase text-center mt-1">Plan will start from this date</p>
+              </div>
+
               <div className="space-y-3">
                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment Options</p>
                  <div className="grid grid-cols-2 gap-3">
@@ -213,7 +264,7 @@ const MembershipStore: React.FC = () => {
               </div>
 
               <button 
-                onClick={handleFinalPayment}
+                onClick={handleProceedToPayment}
                 disabled={isProcessing}
                 style={{ backgroundColor: branding.color }}
                 className="w-full py-5 text-white rounded-2xl font-black text-sm uppercase tracking-[0.1em] shadow-xl transition-all flex items-center justify-center gap-3 active:scale-95"
@@ -231,6 +282,21 @@ const MembershipStore: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Razorpay Payment Modal */}
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => {
+          setIsPaymentModalOpen(false);
+          setPendingPlan(null);
+        }}
+        amount={pendingPlan?.price || 0}
+        description={pendingPlan ? `Purchase ${pendingPlan.name} - ${pendingPlan.type.replace('_', ' ')}` : 'Plan Purchase'}
+        customerName={currentUser.name}
+        customerEmail={currentUser.email}
+        onSuccess={handlePaymentSuccess}
+        onError={handlePaymentError}
+      />
 
       <style>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }

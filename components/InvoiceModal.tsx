@@ -11,9 +11,12 @@ interface InvoiceModalProps {
 }
 
 const InvoiceModal: React.FC<InvoiceModalProps> = ({ sale, branch, member, plan, onClose }) => {
+  const isCash = sale.paymentMethod === 'CASH';
   const gstRate = branch.gstPercentage || 18;
-  const baseAmount = sale.amount / (1 + (gstRate / 100));
-  const gstAmount = sale.amount - baseAmount;
+  
+  // Tax logic: If CASH, treat full amount as base (no tax split shown). If ONLINE/CARD, split tax.
+  const baseAmount = isCash ? sale.amount : (sale.amount / (1 + (gstRate / 100)));
+  const gstAmount = isCash ? 0 : (sale.amount - baseAmount);
   const cgst = gstAmount / 2;
   const sgst = gstAmount / 2;
   const halfGstRate = gstRate / 2;
@@ -37,7 +40,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({ sale, branch, member, plan,
         <div className="bg-slate-900 px-8 py-4 text-white flex justify-between items-center shrink-0 no-print">
            <div className="flex items-center gap-2">
              <i className="fas fa-file-invoice-dollar text-blue-400"></i>
-             <span className="font-black uppercase tracking-widest text-xs">Tax Invoice: {sale.invoiceNo}</span>
+             <span className="font-black uppercase tracking-widest text-xs">{isCash ? 'Payment Receipt' : 'Tax Invoice'}: {sale.invoiceNo}</span>
            </div>
            <div className="flex items-center gap-3">
              <button onClick={handlePrint} className="bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded-lg transition-all text-xs font-bold flex items-center gap-2 shadow-lg active:scale-95">
@@ -66,9 +69,10 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({ sale, branch, member, plan,
            <div className="grid grid-cols-2 gap-12 mb-12 border-t border-slate-100 pt-8">
               <div>
                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Service Provider (From)</h4>
+                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Service Provider (From)</h4>
                  <p className="font-black text-sm uppercase">{branch.name}</p>
                  <p className="text-xs text-slate-500 leading-relaxed mt-1">{branch.address}</p>
-                 <p className="text-xs font-bold text-blue-600 mt-2">GSTIN: {branch.gstin || 'NOT SPECIFIED'}</p>
+                 {!isCash && <p className="text-xs font-bold text-blue-600 mt-2">GSTIN: {branch.gstin || 'NOT SPECIFIED'}</p>}
               </div>
               <div className="text-right">
                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Recipient (Bill To)</h4>
@@ -82,8 +86,8 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({ sale, branch, member, plan,
               <thead className="border-b-2 border-slate-900">
                 <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                   <th className="py-4 text-left">Description</th>
-                  <th className="py-4 text-center">HSN/SAC</th>
-                  <th className="py-4 text-right">Taxable Value</th>
+                  {!isCash && <th className="py-4 text-center">HSN/SAC</th>}
+                  <th className="py-4 text-right">{isCash ? 'Amount' : 'Taxable Value'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -92,7 +96,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({ sale, branch, member, plan,
                       <p className="font-black text-sm text-slate-900 uppercase">{plan.name}</p>
                       <p className="text-[10px] text-slate-400 font-bold mt-1">Validity: {plan.durationDays} Days</p>
                    </td>
-                   <td className="py-6 text-center text-xs font-bold text-slate-600">9963</td>
+                   {!isCash && <td className="py-6 text-center text-xs font-bold text-slate-600">9963</td>}
                    <td className="py-6 text-right font-bold text-slate-900">{formatCurrency(baseAmount)}</td>
                 </tr>
               </tbody>
@@ -100,20 +104,24 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({ sale, branch, member, plan,
 
            <div className="flex justify-end mb-12">
               <div className="w-64 space-y-3">
-                 <div className="flex justify-between text-xs font-bold text-slate-400">
-                    <span>Taxable Amount</span>
-                    <span>{formatCurrency(baseAmount)}</span>
-                 </div>
-                 <div className="flex justify-between text-xs font-bold text-slate-600">
-                    <span>CGST ({halfGstRate}%)</span>
-                    <span>{formatCurrency(cgst)}</span>
-                 </div>
-                 <div className="flex justify-between text-xs font-bold text-slate-600">
-                    <span>SGST ({halfGstRate}%)</span>
-                    <span>{formatCurrency(sgst)}</span>
-                 </div>
+                 {!isCash && (
+                   <>
+                     <div className="flex justify-between text-xs font-bold text-slate-400">
+                        <span>Taxable Amount</span>
+                        <span>{formatCurrency(baseAmount)}</span>
+                     </div>
+                     <div className="flex justify-between text-xs font-bold text-slate-600">
+                        <span>CGST ({halfGstRate}%)</span>
+                        <span>{formatCurrency(cgst)}</span>
+                     </div>
+                     <div className="flex justify-between text-xs font-bold text-slate-600">
+                        <span>SGST ({halfGstRate}%)</span>
+                        <span>{formatCurrency(sgst)}</span>
+                     </div>
+                   </>
+                 )}
                  <div className="flex justify-between pt-3 border-t-2 border-slate-900">
-                    <span className="text-sm font-black uppercase">Total Invoice Value</span>
+                    <span className="text-sm font-black uppercase">Total {isCash ? 'Paid' : 'Invoice Value'}</span>
                     <span className="text-lg font-black text-blue-600">{formatCurrency(sale.amount)}</span>
                  </div>
               </div>
@@ -121,7 +129,10 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({ sale, branch, member, plan,
 
            <div className="grid grid-cols-2 gap-8 pt-8 border-t border-slate-100">
               <div className="text-[10px] text-slate-400 font-medium leading-relaxed italic">
-                 Note: This is a computer-generated tax invoice. No physical signature is required. Tax is calculated based on {gstRate}% GST rate configured for this branch.
+                 {isCash 
+                    ? "Note: This is a payment receipt for records. It is not a valid document for claiming Input Tax Credit." 
+                    : `Note: This is a computer-generated tax invoice. No physical signature is required. Tax is calculated based on ${gstRate}% GST rate configured for this branch.`
+                 }
               </div>
               <div className="text-right">
                  <div className="w-32 h-12 border-b border-slate-300 ml-auto mb-2 opacity-20"></div>

@@ -35,8 +35,9 @@ export interface Communication {
   body: string;
   timestamp: string;
   status: 'DELIVERED' | 'FAILED';
-  category: 'WELCOME' | 'PAYMENT' | 'REMINDER' | 'ANNOUNCEMENT';
+  category: 'WELCOME' | 'PAYMENT' | 'REMINDER' | 'ANNOUNCEMENT' | 'HOLIDAY' | 'GENERAL';
   branchId: string; // Added branchId for tracking
+  isRead?: boolean; // For in-app notifications
 }
 
 export interface Offer {
@@ -48,6 +49,13 @@ export interface Offer {
   branchId: string | 'GLOBAL';
   isActive: boolean;
   ctaText?: string;
+}
+
+export interface Holiday {
+  id: string;
+  date: string; // YYYY-MM-DD format
+  name: string;
+  branchId: string; // 'ALL' for company-wide holidays
 }
 
 export interface Branch {
@@ -69,6 +77,9 @@ export interface Branch {
   smsApiKey?: string;
   smsSenderId?: string;
   equipment?: string;
+  latitude?: number;
+  longitude?: number;
+  geofenceRadius?: number;
 }
 
 export interface Shift {
@@ -92,6 +103,7 @@ export interface User {
   shifts?: Shift[]; 
   hourlyRate?: number; 
   commissionPercentage?: number; 
+  weekOffDay?: number; // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 }
 
 export interface Plan {
@@ -124,12 +136,13 @@ export interface Sale {
   invoiceNo: string;
   date: string;
   amount: number;
+  discount?: number; // Added discount field
   memberId: string;
   planId?: string;
   itemId?: string;
   staffId: string;
   branchId: string;
-  paymentMethod: 'CASH' | 'CARD' | 'ONLINE';
+  paymentMethod: 'CASH' | 'CARD' | 'ONLINE' | 'POS';
   trainerId?: string; 
 }
 
@@ -141,6 +154,14 @@ export interface Attendance {
   timeOut?: string;
   branchId: string;
   type: 'MEMBER' | 'STAFF';
+  // Shift tracking fields for staff
+  shiftIndex?: number;        // Which shift slot (0, 1, 2...)
+  shiftStart?: string;        // Planned shift start time (HH:mm)
+  shiftEnd?: string;          // Planned shift end time (HH:mm)
+  hoursWorked?: number;       // Calculated hours worked
+  isLate?: boolean;           // Checked in after shift start
+  isEarlyOut?: boolean;       // Checked out before shift end
+  isOvertime?: boolean;       // Worked beyond shift end
 }
 
 export interface Booking {
@@ -179,4 +200,106 @@ export interface BodyMetric {
   date: string;
   weight: number;
   bmi?: number;
+}
+
+export interface ClassSession {
+  id: string;
+  templateId?: string;
+  trainerId: string;
+  date: string;
+  timeSlot: string;
+  title: string;
+  capacity: number;
+  branchId: string;
+}
+
+export interface ClassTemplate {
+  id: string;
+  title: string;
+  trainerId: string;
+  dayOfWeek: 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';
+  timeSlot: string;
+  capacity: number;
+  branchId: string;
+}
+
+export interface Expense {
+  id: string;
+  branchId: string;
+  category: 'RENT' | 'UTILITIES' | 'SALARY' | 'EQUIPMENT' | 'MARKETING' | 'OTHER';
+  amount: number;
+  date: string;
+  description: string;
+  recordedBy: string;
+}
+
+export interface WalkIn {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  purpose: 'MEMBERSHIP_INQUIRY' | 'TOUR' | 'DAY_PASS' | 'PT_CONSULTATION' | 'CLASS_INQUIRY' | 'OTHER';
+  source: 'WALK_IN' | 'REFERRAL' | 'SOCIAL_MEDIA' | 'GOOGLE' | 'JUSTDIAL' | 'OTHER';
+  status: 'NEW' | 'FOLLOW_UP' | 'CONVERTED' | 'NOT_INTERESTED';
+  notes?: string;
+  assignedTo?: string;
+  followUpDate?: string;
+  convertedToMemberId?: string;
+  branchId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TransactionCode {
+  code: string;
+  branchId: string;
+  status: 'VALID' | 'USED';
+  generatedBy: string;
+  createdAt: string;
+}
+
+export interface ClassCompletionCode {
+  id: string;
+  bookingId: string;
+  trainerId: string;
+  memberId: string;
+  code: string;
+  status: 'VALID' | 'USED' | 'EXPIRED';
+  classDate: string;
+  classType: 'PT' | 'GROUP';
+  branchId: string;
+  createdAt: string;
+  usedAt?: string;
+}
+
+export interface PayrollRecord {
+  id: string;
+  userId: string;
+  month: string;           // YYYY-MM format
+  year: number;
+  // Attendance summary
+  totalDaysWorked: number;
+  totalHoursWorked: number;
+  lateDays: number;
+  earlyOutDays: number;
+  overtimeHours: number;
+  weekOffsTaken: number;
+  holidaysWorked: number;
+  // Earnings
+  baseSalary: number;      // Hourly rate * hours worked (max 9 per day)
+  weekOffPay: number;      // 9 hours pay per week off after 6 days
+  holidayPay: number;      // 9 hours pay per holiday
+  overtimePay: number;     // 1.5x hourly rate
+  commissionEarned: number; // From class completions
+  bonus: number;
+  totalEarnings: number;
+  // Deductions
+  deductions: number;
+  netPay: number;
+  // Status
+  status: 'DRAFT' | 'APPROVED' | 'PAID';
+  paidAt?: string;
+  branchId: string;
+  createdAt: string;
+  updatedAt: string;
 }

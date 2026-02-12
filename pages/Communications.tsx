@@ -1,15 +1,20 @@
 
 import React, { useState } from 'react';
 import { useAppContext } from '../AppContext';
-import { CommType } from '../types';
+import { CommType, UserRole } from '../types';
 
 const Communications: React.FC = () => {
-  const { communications, users, branches } = useAppContext();
+  const { communications, users, branches, currentUser } = useAppContext();
   const [filter, setFilter] = useState<'ALL' | CommType>('ALL');
 
+  // Filter communications by branch (Super Admin sees all, others see only their branch)
+  const branchFilteredComms = currentUser?.role === UserRole.SUPER_ADMIN
+    ? communications
+    : communications.filter(c => c.branchId === currentUser?.branchId);
+
   const filteredComms = filter === 'ALL' 
-    ? communications 
-    : communications.filter(c => c.type === filter);
+    ? branchFilteredComms 
+    : branchFilteredComms.filter(c => c.type === filter);
 
   return (
     <div className="space-y-6 animate-[fadeIn_0.5s_ease-out]">
@@ -33,9 +38,9 @@ const Communications: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-         <StatCard label="Total Sent" value={communications.length} icon="fa-paper-plane" color="blue" />
-         <StatCard label="Emails Delivered" value={communications.filter(c => c.type === CommType.EMAIL).length} icon="fa-envelope" color="indigo" />
-         <StatCard label="SMS Delivered" value={communications.filter(c => c.type === CommType.SMS).length} icon="fa-comment-dots" color="amber" />
+         <StatCard label="Total Sent" value={branchFilteredComms.length} icon="fa-paper-plane" color="blue" />
+         <StatCard label="Emails Delivered" value={branchFilteredComms.filter(c => c.type === CommType.EMAIL).length} icon="fa-envelope" color="indigo" />
+         <StatCard label="SMS Delivered" value={branchFilteredComms.filter(c => c.type === CommType.SMS).length} icon="fa-comment-dots" color="amber" />
       </div>
 
       <div className="bg-white rounded-[2.5rem] border shadow-sm overflow-hidden">

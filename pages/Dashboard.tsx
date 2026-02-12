@@ -20,6 +20,7 @@ const Dashboard: React.FC = () => {
   if (!currentUser) return null;
 
   const isAdmin = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER].includes(currentUser.role);
+  const isTrainer = currentUser.role === UserRole.TRAINER;
 
   // Role-based filtering for data
   const filteredSubs = currentUser?.role === UserRole.SUPER_ADMIN 
@@ -30,6 +31,61 @@ const Dashboard: React.FC = () => {
     ? sales
     : sales.filter(s => s.branchId === currentUser?.branchId);
 
+  // TRAINER DASHBOARD
+  if (isTrainer) {
+     return (
+       <div className="space-y-6 md:space-y-8 animate-[fadeIn_0.5s_ease-out]">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+             <div>
+               <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight uppercase">Coach Dashboard</h2>
+               <p className="text-slate-500 font-medium text-sm">Welcome back, {currentUser.name.split(' ')[0]}</p>
+             </div>
+             <div className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-2xl border border-indigo-100 flex items-center gap-2">
+               <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
+               <span className="text-[10px] font-black uppercase tracking-widest">On Shift</span>
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+             <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm space-y-4">
+                <div className="bg-blue-50 w-12 h-12 rounded-2xl flex items-center justify-center text-blue-600">
+                   <i className="fas fa-users text-xl"></i>
+                </div>
+                <div>
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assigned Clients</p>
+                   <p className="text-3xl font-black text-slate-900">{subscriptions.filter(s => s.trainerId === currentUser.id && s.status === 'ACTIVE').length}</p>
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-tight">Active personal training</p>
+             </div>
+
+             <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm space-y-4">
+                <div className="bg-emerald-50 w-12 h-12 rounded-2xl flex items-center justify-center text-emerald-600">
+                   <i className="fas fa-calendar-day text-xl"></i>
+                </div>
+                <div>
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Today's Sessions</p>
+                   {/* In a real app, filter bookings by date */}
+                   <p className="text-3xl font-black text-slate-900">4</p>
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-tight">Next: 2:00 PM - Yoga</p>
+             </div>
+
+             <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm space-y-4">
+                <div className="bg-amber-50 w-12 h-12 rounded-2xl flex items-center justify-center text-amber-600">
+                   <i className="fas fa-star text-xl"></i>
+                </div>
+                <div>
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">My Rating</p>
+                   <p className="text-3xl font-black text-slate-900">4.9 <span className="text-sm text-slate-400">/ 5</span></p>
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-tight">Based on member feedback</p>
+             </div>
+          </div>
+       </div>
+     );
+  }
+
+  // MEMBER DASHBOARD
   if (!isAdmin) {
     const mySub = subscriptions.find(s => s.memberId === currentUser.id && s.status === SubscriptionStatus.ACTIVE);
     const myPlan = mySub ? plans.find(p => p.id === mySub.planId) : null;

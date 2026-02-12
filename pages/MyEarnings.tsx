@@ -3,108 +3,73 @@ import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../AppContext';
 import { UserRole, PlanType, SubscriptionStatus } from '../types';
 import PayslipModal from '../components/PayslipModal';
+import { generateMonthlyPayroll, getShiftSummary, MAX_HOURS_PER_DAY } from '../src/lib/payroll';
 
 const MyEarnings: React.FC = () => {
-  const { currentUser, attendance, sales, bookings, plans, subscriptions, branches } = useAppContext();
+  const { currentUser, attendance, sales, bookings, plans, subscriptions, branches, holidays, refreshData } = useAppContext();
   
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [isPayslipOpen, setIsPayslipOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const months = [
     "January", "February", "March", "April", "May", "June", 
     "July", "August", "September", "October", "November", "December"
   ];
 
-  const years = [2024, 2025];
+  // Dynamic years: 2 years back to 2 years forward from current year
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
   const currentBranch = useMemo(() => 
     branches.find(b => b.id === currentUser?.branchId) || branches[0], 
   [currentUser, branches]);
 
-  // Personal Calculations
-  const stats = useMemo(() => {
+  // Filter attendance and bookings for current user only
+  const userAttendance = useMemo(() => {
+    if (!currentUser) return [];
+    return attendance.filter(a => a.userId === currentUser.id && a.type === 'STAFF');
+  }, [currentUser, attendance]);
+
+  const userBookings = useMemo(() => {
+    if (!currentUser) return [];
+    return bookings.filter(b => b.trainerId === currentUser.id);
+  }, [currentUser, bookings]);
+
+  // Filter holidays for current user's branch
+  const userHolidays = useMemo(() => {
+    if (!currentUser) return [];
+    return holidays.filter(h => h.branchId === 'ALL' || h.branchId === currentUser.branchId);
+  }, [currentUser, holidays]);
+
+  // Generate payroll using new shift-based system
+  const payroll = useMemo(() => {
     if (!currentUser) return null;
+    return generateMonthlyPayroll(currentUser, userAttendance, selectedYear, selectedMonth + 1, userBookings, userHolidays);
+  }, [currentUser, userAttendance, userBookings, userHolidays, selectedMonth, selectedYear]);
 
-    // 1. Base Salary from Attendance
-    const monthLogs = attendance.filter(a => {
-      const d = new Date(a.date);
-      return (
-        a.userId === currentUser.id &&
-        d.getMonth() === selectedMonth &&
-        d.getFullYear() === selectedYear
-      );
-    });
+  // Get month's attendance logs for display
+  const monthLogs = useMemo(() => {
+    if (!currentUser) return [];
+    const monthStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`;
+    return userAttendance.filter(a => a.date.startsWith(monthStr));
+  }, [currentUser, userAttendance, selectedMonth, selectedYear]);
 
-    let totalMinutes = 0;
-    monthLogs.forEach(log => {
-      if (log.timeOut) {
-        const start = new Date(`2000-01-01 ${log.timeIn}`);
-        const end = new Date(`2000-01-01 ${log.timeOut}`);
-        totalMinutes += (end.getTime() - start.getTime()) / 60000;
-      }
-    });
-
-    const hours = totalMinutes / 60;
-    const rate = currentUser.hourlyRate || 500;
-    const baseSalary = hours * rate;
-
-    // 2. Commissions
-    let commissions = 0;
-    let incentiveType = "No incentives found";
-
-    if (currentUser.role === UserRole.TRAINER) {
-      const completedBookings = bookings.filter(b => {
-        const d = new Date(b.date);
-        return (
-          b.trainerId === currentUser.id &&
-          b.status === 'COMPLETED' &&
-          d.getMonth() === selectedMonth &&
-          d.getFullYear() === selectedYear
-        );
-      });
-
-      const sessionEarnings = completedBookings.map(booking => {
-        const sub = subscriptions.find(s => 
-          s.memberId === booking.memberId && 
-          s.status === SubscriptionStatus.ACTIVE &&
-          plans.find(p => p.id === s.planId)?.type === booking.type
-        );
-        const plan = plans.find(p => p.id === (sub?.planId || ''));
-        if (!plan) return 0;
-        const maxSessions = plan.maxSessions || 1; 
-        const unitPrice = plan.price / maxSessions;
-        return unitPrice * ((currentUser.commissionPercentage || 0) / 100);
-      });
-
-      commissions = sessionEarnings.reduce((acc, e) => acc + e, 0);
-      incentiveType = `${completedBookings.length} Sessions Conducted (${currentUser.commissionPercentage || 0}%)`;
-    } else if (currentUser.role === UserRole.MANAGER) {
-      const managerSales = sales.filter(s => {
-        const d = new Date(s.date);
-        return (
-          s.staffId === currentUser.id &&
-          d.getMonth() === selectedMonth &&
-          d.getFullYear() === selectedYear
-        );
-      });
-
-      const gymSales = managerSales.filter(s => plans.find(p => p.id === s.planId)?.type === PlanType.GYM);
-      const saleEarnings = gymSales.map(sale => sale.amount * ((currentUser.commissionPercentage || 0) / 100));
-      
-      commissions = saleEarnings.reduce((acc, e) => acc + e, 0);
-      incentiveType = `${gymSales.length} Gym Plans Sold (${currentUser.commissionPercentage || 0}%)`;
-    }
-
+  // Legacy stats for backward compatibility with PayslipModal
+  const stats = useMemo(() => {
+    if (!payroll) return null;
     return {
-      hours,
-      rate,
-      baseSalary,
-      commissions,
-      incentiveType,
-      total: baseSalary + commissions
+      hours: payroll.totalHoursWorked,
+      rate: currentUser?.hourlyRate || 500,
+      baseSalary: payroll.baseSalary,
+      commissions: payroll.commissionEarned,
+      incentiveType: currentUser?.role === UserRole.TRAINER 
+        ? `${Math.round(payroll.commissionEarned / ((currentUser?.commissionPercentage || 1) / 100) / 500)} Sessions Conducted (${currentUser?.commissionPercentage || 0}%)`
+        : `Sales Commission (${currentUser?.commissionPercentage || 0}%)`,
+      total: payroll.netPay
     };
-  }, [currentUser, attendance, bookings, sales, plans, subscriptions, selectedMonth, selectedYear]);
+  }, [payroll, currentUser]);
 
   const formatCurrency = (amt: number) => {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amt);
@@ -144,19 +109,25 @@ const MyEarnings: React.FC = () => {
          <div className="lg:col-span-1 space-y-6">
             <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm text-center">
                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Monthly Net Income</p>
-               <h3 className="text-4xl font-black text-slate-900 tracking-tighter">{formatCurrency(stats?.total || 0)}</h3>
+               <h3 className="text-4xl font-black text-slate-900 tracking-tighter">{formatCurrency(payroll?.netPay || 0)}</h3>
                <div className="mt-6 pt-6 border-t border-slate-50 flex justify-between text-left">
                   <div>
                     <p className="text-[9px] font-black text-slate-400 uppercase">Hourly Rate</p>
-                    <p className="font-bold text-sm text-slate-700">{formatCurrency(stats?.rate || 0)}</p>
+                    <p className="font-bold text-sm text-slate-700">{formatCurrency(currentUser?.hourlyRate || 0)}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-[9px] font-black text-slate-400 uppercase">Hours Logged</p>
-                    <p className="font-bold text-sm text-slate-700">{(stats?.hours || 0).toFixed(1)} hrs</p>
+                    <p className="font-bold text-sm text-slate-700">{(payroll?.totalHoursWorked || 0).toFixed(1)} hrs</p>
                   </div>
+               </div>
+               {/* Shift Information */}
+               <div className="mt-4 pt-4 border-t border-slate-50 text-left">
+                  <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Assigned Shifts</p>
+                  <p className="text-xs font-medium text-slate-600">{getShiftSummary(currentUser?.shifts || [])}</p>
                </div>
             </div>
 
+            {currentUser?.role === UserRole.TRAINER && (
             <div className="bg-emerald-950 text-white p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden group">
                <div className="relative z-10">
                   <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest mb-1">Commission Earned</p>
@@ -165,6 +136,7 @@ const MyEarnings: React.FC = () => {
                </div>
                <i className="fas fa-coins absolute -bottom-10 -right-10 text-[150px] text-white/5 rotate-12 group-hover:rotate-45 transition-transform duration-1000"></i>
             </div>
+            )}
          </div>
 
          <div className="lg:col-span-3 space-y-8">
@@ -175,6 +147,7 @@ const MyEarnings: React.FC = () => {
                </div>
                <div className="p-8">
                   <div className="space-y-6">
+                     {/* Base Salary */}
                      <div className="flex items-center justify-between group">
                         <div className="flex items-center gap-4">
                            <div className="bg-blue-50 text-blue-600 w-12 h-12 rounded-2xl flex items-center justify-center">
@@ -182,28 +155,63 @@ const MyEarnings: React.FC = () => {
                            </div>
                            <div>
                               <p className="text-sm font-black text-slate-900 uppercase">Base Salary</p>
-                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Logged hours × Hourly rate</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{payroll?.totalHoursWorked.toFixed(1)}h × ₹{currentUser?.hourlyRate || 0}/hr (Max {MAX_HOURS_PER_DAY}h/day)</p>
                            </div>
                         </div>
-                        <p className="text-lg font-black text-slate-900">{formatCurrency(stats?.baseSalary || 0)}</p>
+                        <p className="text-lg font-black text-slate-900">{formatCurrency(payroll?.baseSalary || 0)}</p>
                      </div>
 
+                     {/* Week Off Pay */}
+                     <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-4">
+                           <div className="bg-purple-50 text-purple-600 w-12 h-12 rounded-2xl flex items-center justify-center">
+                              <i className="fas fa-umbrella-beach"></i>
+                           </div>
+                           <div>
+                              <p className="text-sm font-black text-slate-900 uppercase">Week Off Pay</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{payroll?.weekOffsTaken || 0} week offs (After {payroll?.totalDaysWorked || 0} days worked)</p>
+                           </div>
+                        </div>
+                        <p className="text-lg font-black text-purple-600">+{formatCurrency(payroll?.weekOffPay || 0)}</p>
+                     </div>
+
+                     {/* Holiday Pay */}
+                     <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-4">
+                           <div className="bg-orange-50 text-orange-600 w-12 h-12 rounded-2xl flex items-center justify-center">
+                              <i className="fas fa-calendar-check"></i>
+                           </div>
+                           <div>
+                              <p className="text-sm font-black text-slate-900 uppercase">Holiday Pay</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{MAX_HOURS_PER_DAY}h pay per holiday</p>
+                           </div>
+                        </div>
+                        <p className="text-lg font-black text-orange-600">+{formatCurrency(payroll?.holidayPay || 0)}</p>
+                     </div>
+
+                     {/* Commissions */}
                      <div className="flex items-center justify-between group">
                         <div className="flex items-center gap-4">
                            <div className="bg-emerald-50 text-emerald-600 w-12 h-12 rounded-2xl flex items-center justify-center">
                               <i className="fas fa-chart-line"></i>
                            </div>
                            <div>
-                              <p className="text-sm font-black text-slate-900 uppercase">Commissions / Incentives</p>
-                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{currentUser.role === UserRole.TRAINER ? 'Per Session' : 'Per Gym Enrollment'}</p>
+                              <p className="text-sm font-black text-slate-900 uppercase">Commissions</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{currentUser.role === UserRole.TRAINER ? 'Per Session' : 'Per Sale'} ({currentUser?.commissionPercentage || 0}%)</p>
                            </div>
                         </div>
-                        <p className="text-lg font-black text-emerald-600">+{formatCurrency(stats?.commissions || 0)}</p>
+                        <p className="text-lg font-black text-emerald-600">+{formatCurrency(payroll?.commissionEarned || 0)}</p>
                      </div>
 
                      <div className="pt-8 mt-8 border-t border-slate-100 flex items-center justify-between">
-                        <p className="text-xl font-black text-slate-900 uppercase">Total Professional Income</p>
-                        <p className="text-3xl font-black text-slate-900">{formatCurrency(stats?.total || 0)}</p>
+                        <div>
+                           <p className="text-xl font-black text-slate-900 uppercase">Total Earnings</p>
+                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+                              {payroll?.lateDays ? `${payroll.lateDays} late arrivals` : ''} 
+                              {payroll?.earlyOutDays ? ` • ${payroll.earlyOutDays} early outs` : ''}
+                           </p>
+                        </div>
+                        <p className="text-3xl font-black text-slate-900">{formatCurrency(payroll?.totalEarnings || 0)}</p>
                      </div>
                   </div>
                </div>

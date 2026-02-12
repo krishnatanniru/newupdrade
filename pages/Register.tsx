@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAppContext } from '../AppContext';
+import { supabase } from '../src/lib/supabase';
 
 const Register: React.FC = () => {
   const { branches, plans, enrollMember, showToast } = useAppContext();
@@ -23,15 +24,9 @@ const Register: React.FC = () => {
     confirmPassword: ''
   });
 
-  const selectedBranchPlans = plans.filter(p => p.branchId === formData.branchId && p.isActive);
-
   const handleNextStep = () => {
     if (step === 1 && !formData.branchId) {
       showToast("Please select a branch to continue.", "error");
-      return;
-    }
-    if (step === 2 && !formData.planId) {
-      showToast("Please select a plan to continue.", "error");
       return;
     }
     setStep(prev => prev + 1);
@@ -55,16 +50,30 @@ const Register: React.FC = () => {
     setIsSubmitting(true);
     
     try {
-      await enrollMember({
+      // Check if email already exists
+      const { data: existingUsers } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', formData.email.toLowerCase());
+      
+      if (existingUsers && existingUsers.length > 0) {
+        showToast("Email already registered. Please login.", "error");
+        setIsSubmitting(false);
+        return;
+      }
+      
+      // Create the user in our users table only (without plan/subscription)
+      // User will be auto-created in Supabase Auth on first login
+      const newUser = await enrollMember({
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
         branchId: formData.branchId,
         emergencyContact: formData.emergencyContact,
         address: formData.address
-      }, formData.planId, undefined, formData.password);
+      }, undefined, undefined, formData.password);
       
-      showToast("Athlete Account Created! Redirecting to Login...", "success");
+      showToast("Account created! Please login to purchase your membership.", "success");
       setTimeout(() => navigate('/login'), 2000);
     } catch (err) {
       showToast("Registration failed. Please try again.", "error");
@@ -83,7 +92,7 @@ const Register: React.FC = () => {
       <div className="w-full max-w-2xl bg-slate-900 rounded-[3rem] shadow-2xl overflow-hidden border border-white/5 relative z-10 animate-[fadeIn_0.5s_ease-out]">
         {/* Progress Bar */}
         <div className="h-1.5 w-full bg-slate-800 flex">
-          <div className={`h-full bg-blue-500 transition-all duration-500 ${step === 1 ? 'w-1/3' : step === 2 ? 'w-2/3' : 'w-full'}`}></div>
+          <div className={`h-full bg-blue-500 transition-all duration-500 ${step === 1 ? 'w-1/2' : 'w-full'}`}></div>
         </div>
 
         <div className="p-8 md:p-12">
@@ -96,7 +105,7 @@ const Register: React.FC = () => {
               <span className="font-black text-xl text-white tracking-tighter uppercase">IronFlow</span>
             </div>
             <h2 className="text-3xl font-black text-white uppercase tracking-tight">Start Your Journey</h2>
-            <p className="text-slate-400 font-medium text-sm mt-2">Step {step} of 3: {step === 1 ? 'Choose Location' : step === 2 ? 'Select Plan' : 'Account & Access'}</p>
+            <p className="text-slate-400 font-medium text-sm mt-2">Step {step} of 2: {step === 1 ? 'Choose Location' : 'Account & Access'}</p>
           </div>
 
           <form onSubmit={handleSubmit}>
@@ -109,7 +118,7 @@ const Register: React.FC = () => {
                     <button
                       key={branch.id}
                       type="button"
-                      onClick={() => setFormData({...formData, branchId: branch.id, planId: ''})}
+                      onClick={() => setFormData({...formData, branchId: branch.id})}
                       className={`p-6 rounded-3xl border-2 text-left transition-all ${formData.branchId === branch.id ? 'border-blue-500 bg-blue-500/10' : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'}`}
                     >
                       <h4 className={`font-black text-lg ${formData.branchId === branch.id ? 'text-white' : 'text-slate-300'}`}>{branch.name}</h4>
@@ -123,63 +132,21 @@ const Register: React.FC = () => {
                     onClick={handleNextStep}
                     className="w-full py-5 bg-blue-600 hover:bg-blue-700 text-white font-black text-sm uppercase tracking-widest rounded-2xl transition-all shadow-xl active:scale-[0.98]"
                   >
-                    Continue to Plans
+                    Continue
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Step 2: Plan Selection */}
+            {/* Step 2: Detailed Info & Security */}
             {step === 2 && (
-              <div className="space-y-4 animate-[slideUp_0.3s_ease-out]">
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-6">Select your initial membership</p>
-                <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto pr-2 scrollbar-hide">
-                  {selectedBranchPlans.map(plan => (
-                    <button
-                      key={plan.id}
-                      type="button"
-                      onClick={() => setFormData({...formData, planId: plan.id})}
-                      className={`p-6 rounded-3xl border-2 text-left transition-all relative overflow-hidden ${formData.planId === plan.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'}`}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className={`font-black text-lg ${formData.planId === plan.id ? 'text-white' : 'text-slate-300'}`}>{plan.name}</h4>
-                          <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-1">{plan.type} • {plan.durationDays} Days</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-xl font-black text-white">₹{plan.price}</p>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                  {selectedBranchPlans.length === 0 && (
-                    <div className="text-center py-10">
-                      <p className="text-slate-500 font-bold">No active plans available for this branch.</p>
-                    </div>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-4 pt-8">
-                  <button
-                    type="button"
-                    onClick={handlePrevStep}
-                    className="py-5 bg-slate-800 text-slate-400 font-black text-sm uppercase tracking-widest rounded-2xl hover:bg-slate-700 transition-all"
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleNextStep}
-                    className="py-5 bg-blue-600 hover:bg-blue-700 text-white font-black text-sm uppercase tracking-widest rounded-2xl shadow-xl active:scale-[0.98]"
-                  >
-                    Final Step
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Detailed Info & Security */}
-            {step === 3 && (
               <div className="space-y-6 animate-[slideUp_0.3s_ease-out]">
+                <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-2xl p-4 text-center">
+                  <p className="text-indigo-300 text-sm font-medium">
+                    <i className="fas fa-info-circle mr-2"></i>
+                    After registration, login to purchase your membership plan
+                  </p>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Full Name</label>

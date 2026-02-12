@@ -1,18 +1,27 @@
-
 import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../AppContext';
-import { UserRole, User, Attendance, PlanType, SubscriptionStatus } from '../types';
+import { UserRole, User, Attendance, PlanType, SubscriptionStatus, Expense } from '../types';
 
 const TaxCenter: React.FC = () => {
-  const { sales, branches, currentUser, attendance, users, settlementRate, plans, bookings, subscriptions } = useAppContext();
+  const { sales, branches, currentUser, attendance, users, settlementRate, plans, bookings, subscriptions, expenses, addExpense, deleteExpense } = useAppContext();
   
-  const [activeView, setActiveView] = useState<'GST' | 'SETTLEMENT' | 'PAYROLL' | 'COMMISSIONS'>('GST');
+  const [activeView, setActiveView] = useState<'GST' | 'SETTLEMENT' | 'PAYROLL' | 'COMMISSIONS' | 'EXPENSES' | 'PROFIT_LOSS'>('GST');
   const [selectedBranchId, setSelectedBranchId] = useState<string>(currentUser?.branchId || branches[0].id);
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
+  const [isExpenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [expenseForm, setExpenseForm] = useState({
+     category: 'RENT',
+     amount: '',
+     date: new Date().toISOString().split('T')[0],
+     description: ''
+  });
+
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const years = [2024, 2025];
+  
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
   const currentBranch = useMemo(() => branches.find(b => b.id === selectedBranchId), [selectedBranchId, branches]);
 
@@ -27,6 +36,22 @@ const TaxCenter: React.FC = () => {
     });
   }, [sales, selectedBranchId, selectedMonth, selectedYear]);
 
+  // Only consider non-cash transactions for GST
+  const gstApplicableSales = useMemo(() => {
+     return filteredSales.filter(s => s.paymentMethod !== 'CASH');
+  }, [filteredSales]);
+
+  const filteredExpenses = useMemo(() => {
+    return expenses.filter(e => {
+        const d = new Date(e.date);
+        return (
+            e.branchId === selectedBranchId &&
+            d.getMonth() === selectedMonth &&
+            d.getFullYear() === selectedYear
+        );
+    });
+  }, [expenses, selectedBranchId, selectedMonth, selectedYear]);
+
   const taxStats = useMemo(() => {
     const gstRate = currentBranch?.gstPercentage || 18;
     return filteredSales.reduce((acc, s) => {
@@ -39,7 +64,27 @@ const TaxCenter: React.FC = () => {
         count: acc.count + 1
       };
     }, { total: 0, taxable: 0, tax: 0, count: 0 });
-  }, [filteredSales, currentBranch]);
+  }, [gstApplicableSales, currentBranch]);
+
+  const downloadJSON = () => {
+    const data = gstApplicableSales.map(sale => ({
+       Invoice: sale.invoiceNo,
+       Date: sale.date,
+       Amount: sale.amount,
+       Taxable: (sale.amount / (1 + ((currentBranch?.gstPercentage || 18) / 100))).toFixed(2),
+       Tax: (sale.amount - (sale.amount / (1 + ((currentBranch?.gstPercentage || 18) / 100)))).toFixed(2),
+       Payment: sale.paymentMethod
+    }));
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `IronFlow_${currentBranch?.name}_${months[selectedMonth]}_${selectedYear}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const totalPayouts = useMemo(() => {
     const branchSales = sales.filter(s => s.branchId === selectedBranchId);
@@ -69,6 +114,32 @@ const TaxCenter: React.FC = () => {
     };
   }, [bookings, selectedBranchId, settlementRate]);
 
+  const pnlStats = useMemo(() => {
+      const totalIncome = filteredSales.reduce((acc, s) => acc + s.amount, 0);
+      const operationalExpenses = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
+      const payrollCost = totalPayouts.grandTotal;
+      const totalExpenses = operationalExpenses + payrollCost;
+      const netProfit = totalIncome - totalExpenses;
+      return { totalIncome, operationalExpenses, payrollCost, totalExpenses, netProfit };
+  }, [filteredSales, filteredExpenses, totalPayouts]);
+
+  const handleAddExpense = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!expenseForm.amount) return;
+      const newExpense: Expense = {
+          id: `exp-${Date.now()}`,
+          branchId: selectedBranchId,
+          category: expenseForm.category as any,
+          amount: Number(expenseForm.amount),
+          date: expenseForm.date,
+          description: expenseForm.description,
+          recordedBy: currentUser?.id || 'admin'
+      };
+      addExpense(newExpense);
+      setExpenseModalOpen(false);
+      setExpenseForm({ category: 'RENT', amount: '', date: new Date().toISOString().split('T')[0], description: '' });
+  };
+
   const formatCurrency = (amt: number) => {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amt);
   };
@@ -82,13 +153,13 @@ const TaxCenter: React.FC = () => {
         </div>
         
         <div className="flex bg-white p-1 rounded-2xl border shadow-sm w-full xl:w-auto overflow-x-auto scrollbar-hide">
-           {['GST', 'SETTLEMENT', 'PAYROLL', 'COMMISSIONS'].map((v) => (
+           {['GST', 'SETTLEMENT', 'PAYROLL', 'COMMISSIONS', 'EXPENSES', 'PROFIT_LOSS'].map((v) => (
              <button
                key={v}
                onClick={() => setActiveView(v as any)}
                className={`flex-1 xl:flex-none px-6 py-2.5 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeView === v ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
              >
-               {v}
+               {v === 'PROFIT_LOSS' ? 'PROFIT & LOSS' : v}
              </button>
            ))}
         </div>
@@ -104,7 +175,7 @@ const TaxCenter: React.FC = () => {
                  </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+                 <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Month</label>
                    <select className="w-full p-4 bg-slate-50 border rounded-2xl outline-none font-bold text-xs" value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))}>
@@ -118,15 +189,28 @@ const TaxCenter: React.FC = () => {
                    </select>
                 </div>
               </div>
+              
+              <button 
+                onClick={downloadJSON}
+                className="w-full py-3 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
+              >
+                <i className="fas fa-file-export"></i> Export GST Invoices (JSON)
+              </button>
 
               <div className="pt-4 border-t space-y-4">
                   <div className="bg-slate-900 p-6 rounded-3xl text-center text-white shadow-xl">
                     <p className="text-[9px] font-black uppercase tracking-[0.2em] opacity-50 mb-1">
-                      {activeView === 'GST' ? 'GST Liability' : activeView === 'SETTLEMENT' ? 'Settlement Due' : 'Total Payout'}
+                      {activeView === 'GST' ? 'GST Liability' : 
+                       activeView === 'SETTLEMENT' ? 'Settlement Due' : 
+                       activeView === 'EXPENSES' ? 'Total Expenses' :
+                       activeView === 'PROFIT_LOSS' ? 'Net Profit' :
+                       'Total Payout'}
                     </p>
-                    <p className="text-xl md:text-2xl font-black">
+                    <p className={`text-xl md:text-2xl font-black ${activeView === 'PROFIT_LOSS' && pnlStats.netProfit < 0 ? 'text-red-400' : 'text-white'}`}>
                       {activeView === 'GST' ? formatCurrency(taxStats.tax) : 
                        activeView === 'SETTLEMENT' ? formatCurrency(settlementData.totalAmount) :
+                       activeView === 'EXPENSES' ? formatCurrency(pnlStats.totalExpenses) :
+                       activeView === 'PROFIT_LOSS' ? formatCurrency(pnlStats.netProfit) :
                        formatCurrency(totalPayouts.grandTotal)}
                     </p>
                   </div>
@@ -190,7 +274,7 @@ const TaxCenter: React.FC = () => {
                               </div>
                               <div>
                                  <p className="text-xs font-bold text-slate-900 uppercase">Session #{b.id.slice(-6)}</p>
-                                 <p className="text-[10px] text-slate-500 font-medium">{b.date} at {b.time}</p>
+                                 <p className="text-[10px] text-slate-500 font-medium">{b.date} at {b.timeSlot}</p>
                               </div>
                            </div>
                            <p className="text-xs font-black text-slate-900">{formatCurrency(settlementRate)}</p>
@@ -244,8 +328,137 @@ const TaxCenter: React.FC = () => {
                 </div>
              </div>
            )}
+
+           {activeView === 'EXPENSES' && (
+             <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                   <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Expense Records</h3>
+                   <button onClick={() => setExpenseModalOpen(true)} className="bg-red-50 text-red-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all flex items-center gap-2">
+                      <i className="fas fa-plus"></i> Add Expense
+                   </button>
+                </div>
+                <div className="bg-white rounded-[2rem] border shadow-sm overflow-hidden">
+                   <table className="w-full text-left">
+                      <thead className="bg-slate-50 border-b">
+                         <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                            <th className="px-8 py-5">Date</th>
+                            <th className="px-8 py-5">Category</th>
+                            <th className="px-8 py-5">Description</th>
+                            <th className="px-8 py-5 text-right">Amount</th>
+                            <th className="px-8 py-5 text-right">Actions</th>
+                         </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                         {filteredExpenses.length === 0 ? (
+                            <tr>
+                               <td colSpan={5} className="px-8 py-10 text-center text-slate-400 italic text-xs font-bold uppercase tracking-widest">No expenses recorded for this period.</td>
+                            </tr>
+                         ) : (
+                            filteredExpenses.map(exp => (
+                               <tr key={exp.id} className="hover:bg-slate-50/50">
+                                  <td className="px-8 py-5 font-bold text-slate-500 text-xs">{exp.date}</td>
+                                  <td className="px-8 py-5">
+                                     <span className="bg-slate-100 text-slate-600 text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest">{exp.category}</span>
+                                  </td>
+                                  <td className="px-8 py-5 text-xs font-bold text-slate-700">{exp.description}</td>
+                                  <td className="px-8 py-5 text-right font-black text-slate-900 text-sm">{formatCurrency(exp.amount)}</td>
+                                  <td className="px-8 py-5 text-right">
+                                     <button onClick={() => deleteExpense(exp.id)} className="text-red-400 hover:text-red-600 transition-colors">
+                                        <i className="fas fa-trash-can"></i>
+                                     </button>
+                                  </td>
+                               </tr>
+                            ))
+                         )}
+                      </tbody>
+                   </table>
+                </div>
+             </div>
+           )}
+
+           {activeView === 'PROFIT_LOSS' && (
+             <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                   <SummaryCard label="Total Income (Sales)" value={formatCurrency(pnlStats.totalIncome)} color="emerald" />
+                   <SummaryCard label="Total Expenses" value={formatCurrency(pnlStats.totalExpenses)} color="slate" />
+                   <SummaryCard label="Net Profit / Loss" value={formatCurrency(pnlStats.netProfit)} color={pnlStats.netProfit >= 0 ? "blue" : "red"} />
+                </div>
+                
+                <div className="bg-white p-8 rounded-[2rem] border shadow-sm">
+                   <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-6">Financial Health Summary</h3>
+                   <div className="space-y-4">
+                      <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                         <span className="text-xs font-bold text-slate-500 uppercase">Revenue Stream</span>
+                         <span className="text-sm font-black text-emerald-600">+{formatCurrency(pnlStats.totalIncome)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                         <span className="text-xs font-bold text-slate-500 uppercase">Operational Expenses</span>
+                         <span className="text-sm font-black text-slate-700">-{formatCurrency(pnlStats.operationalExpenses)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                         <span className="text-xs font-bold text-slate-500 uppercase">Payroll & Commissions</span>
+                         <span className="text-sm font-black text-slate-700">-{formatCurrency(pnlStats.payrollCost)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-4 bg-red-50 rounded-2xl border border-red-100">
+                         <span className="text-xs font-bold text-red-700 uppercase">Total Outflow</span>
+                         <span className="text-sm font-black text-red-700">-{formatCurrency(pnlStats.totalExpenses)}</span>
+                      </div>
+                      <div className={`flex justify-between items-center p-6 rounded-2xl border-2 ${pnlStats.netProfit >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
+                         <span className={`text-xs font-black uppercase tracking-widest ${pnlStats.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net Bottom Line</span>
+                         <span className={`text-xl font-black ${pnlStats.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatCurrency(pnlStats.netProfit)}</span>
+                      </div>
+                   </div>
+                </div>
+             </div>
+           )}
         </div>
       </div>
+
+      {isExpenseModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+           <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-[slideUp_0.3s_ease-out]">
+              <div className="bg-red-600 p-8 text-white flex justify-between items-center">
+                 <div>
+                    <h3 className="text-xl font-black uppercase tracking-tight leading-none mb-1">Record Expense</h3>
+                    <p className="text-[10px] text-red-200 font-bold uppercase tracking-widest">Financial Outflow</p>
+                 </div>
+                 <button onClick={() => setExpenseModalOpen(false)} className="bg-white/10 p-2.5 rounded-xl hover:bg-white/20 transition-colors">
+                    <i className="fas fa-times"></i>
+                 </button>
+              </div>
+              <form onSubmit={handleAddExpense} className="p-8 space-y-6">
+                 <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Category</label>
+                    <select className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 font-black text-xs uppercase" value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})}>
+                       <option value="RENT">Rent / Lease</option>
+                       <option value="UTILITIES">Utilities (Electric/Water)</option>
+                       <option value="SALARY">Staff Salaries</option>
+                       <option value="EQUIPMENT">Equipment Maintenance</option>
+                       <option value="MARKETING">Marketing & Ads</option>
+                       <option value="OTHER">Other Operational</option>
+                    </select>
+                 </div>
+                 <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date</label>
+                       <input type="date" required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 font-black text-xs" value={expenseForm.date} onChange={e => setExpenseForm({...expenseForm, date: e.target.value})} />
+                    </div>
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Amount (₹)</label>
+                       <input type="number" required min="0" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 font-black text-sm" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} />
+                    </div>
+                 </div>
+                 <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Description</label>
+                    <input type="text" required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 font-bold text-sm" placeholder="e.g. AC Repair" value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})} />
+                 </div>
+                 <button type="submit" className="w-full py-5 bg-red-600 text-white rounded-[1.5rem] font-black text-sm uppercase tracking-widest shadow-2xl shadow-red-200 transition-all active:scale-95 hover:bg-red-700">
+                    LOG EXPENSE
+                 </button>
+              </form>
+           </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -255,7 +468,8 @@ const SummaryCard = ({ label, value, color }: any) => {
     blue: 'bg-blue-50 text-blue-600 border-blue-100',
     indigo: 'bg-indigo-50 text-indigo-600 border-indigo-100',
     emerald: 'bg-emerald-50 text-emerald-600 border-emerald-100',
-    slate: 'bg-slate-50 text-slate-600 border-slate-100'
+    slate: 'bg-slate-50 text-slate-600 border-slate-100',
+    red: 'bg-red-50 text-red-600 border-red-100'
   };
   return (
     <div className={`p-6 rounded-[2rem] border shadow-sm ${colors[color]} transition-all min-w-0`}>

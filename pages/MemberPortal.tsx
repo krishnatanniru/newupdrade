@@ -26,7 +26,7 @@ const TERMS_CONTENT = (
 );
 
 const MemberPortal: React.FC = () => {
-  const { currentUser, subscriptions, plans, bookings, addFeedback, showToast, updateUser, sales, branches, askGemini, metrics, addMetric, offers } = useAppContext();
+  const { currentUser, subscriptions, plans, bookings, addFeedback, feedback, showToast, updateUser, sales, branches, askGemini, metrics, addMetric, offers, users } = useAppContext();
   
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'COACH' | 'METRICS' | 'FEEDBACK'>('OVERVIEW');
   const [feedbackType, setFeedbackType] = useState<'SUGGESTION' | 'COMPLAINT'>('SUGGESTION');
@@ -276,8 +276,111 @@ const MemberPortal: React.FC = () => {
         </div>
       )}
 
-      {/* Responsive Tab Content Handlers for Coach, Metrics, Feedback would follow similar patterns */}
-      {/* ... keeping logic robust for tab switching ... */}
+      {activeTab === 'COACH' && (
+        <div className="animate-[slideUp_0.4s_ease-out]">
+           {(() => {
+              const activeTrainerSub = memberSubs.find(s => s.status === 'ACTIVE' && s.trainerId);
+              const trainer = activeTrainerSub ? users.find(u => u.id === activeTrainerSub.trainerId) : null;
+              
+              if (!trainer) {
+                 return (
+                    <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 text-center">
+                       <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <i className="fas fa-user-slash text-slate-300 text-3xl"></i>
+                       </div>
+                       <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">No Personal Coach</h3>
+                       <p className="text-slate-500 font-medium text-sm mb-6">You currently do not have a dedicated personal trainer assigned.</p>
+                    </div>
+                 );
+              }
+              return (
+                 <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 flex flex-col md:flex-row items-center gap-8 text-center md:text-left">
+                    <img src={trainer.avatar} className="w-32 h-32 rounded-3xl object-cover shadow-2xl" alt="" />
+                    <div>
+                       <span className="bg-indigo-50 text-indigo-600 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest mb-3 inline-block">Your Coach</span>
+                       <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tight mb-2">{trainer.name}</h2>
+                       <p className="text-slate-500 font-medium text-sm mb-6">{trainer.email}</p>
+                       <div className="flex gap-4 justify-center md:justify-start">
+                          <button className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-100">Message</button>
+                       </div>
+                    </div>
+                 </div>
+              );
+           })()}
+        </div>
+      )}
+
+      {activeTab === 'METRICS' && (
+        <div className="space-y-6 animate-[slideUp_0.4s_ease-out]">
+           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100">
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-6 flex items-center gap-3">
+                 <i className="fas fa-weight-scale text-emerald-500"></i> Log Progress
+              </h3>
+              <form onSubmit={handleAddMetric} className="flex gap-4">
+                 <input type="number" placeholder="Current Weight (kg)" className="flex-1 p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500" value={weight} onChange={e => setWeight(e.target.value)} />
+                 <button type="submit" className="bg-emerald-500 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-100 hover:bg-emerald-600 transition-all">Log Entry</button>
+              </form>
+           </div>
+           
+           <div className="space-y-4">
+              {myMetrics.length === 0 ? (
+                 <p className="text-center text-slate-400 font-medium py-10">No metrics logged yet. Start tracking today!</p>
+              ) : (
+                 [...myMetrics].reverse().map(metric => (
+                    <div key={metric.id} className="bg-white p-5 rounded-2xl border border-slate-100 flex justify-between items-center">
+                       <span className="font-bold text-slate-500 text-xs uppercase">{metric.date}</span>
+                       <span className="font-black text-xl text-slate-900">{metric.weight} <span className="text-sm text-slate-400">kg</span></span>
+                    </div>
+                 ))
+              )}
+           </div>
+        </div>
+      )}
+
+      {activeTab === 'FEEDBACK' && (
+        <div className="space-y-6 animate-[slideUp_0.4s_ease-out]">
+           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100">
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-6 flex items-center gap-3">
+                 <i className="fas fa-comment-dots text-blue-500"></i> Share Your Voice
+              </h3>
+              <form onSubmit={handleSubmitFeedback} className="space-y-4">
+                 <div className="flex gap-2">
+                    <button type="button" onClick={() => setFeedbackType('SUGGESTION')} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${feedbackType === 'SUGGESTION' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400'}`}>Suggestion</button>
+                    <button type="button" onClick={() => setFeedbackType('COMPLAINT')} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${feedbackType === 'COMPLAINT' ? 'bg-red-500 text-white shadow-lg' : 'bg-slate-50 text-slate-400'}`}>Issue Report</button>
+                 </div>
+                 <textarea 
+                    className="w-full p-5 bg-slate-50 border border-slate-100 rounded-2xl outline-none font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 min-h-[120px]" 
+                    placeholder="Tell us how we can improve..."
+                    value={feedbackContent}
+                    onChange={e => setFeedbackContent(e.target.value)}
+                 />
+                 <button disabled={isSubmitting || !feedbackContent.trim()} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl disabled:opacity-50">
+                    {isSubmitting ? 'Sending...' : 'Submit Feedback'}
+                 </button>
+              </form>
+           </div>
+
+           <div className="space-y-4">
+              {feedback.filter(f => f.memberId === currentUser.id).length === 0 ? (
+                 <p className="text-center text-slate-400 font-medium py-10">You haven't submitted any feedback yet.</p>
+              ) : (
+                 feedback.filter(f => f.memberId === currentUser.id).reverse().map(f => (
+                    <div key={f.id} className="bg-white p-6 rounded-2xl border border-slate-100 space-y-3">
+                       <div className="flex justify-between items-center">
+                          <span className={`text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest ${f.type === 'SUGGESTION' ? 'bg-blue-50 text-blue-600' : 'bg-red-50 text-red-600'}`}>{f.type}</span>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase">{f.date}</span>
+                       </div>
+                       <p className="text-sm font-medium text-slate-700 leading-relaxed">{f.content}</p>
+                       <div className="pt-3 border-t border-slate-50 flex justify-between items-center">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Status</span>
+                          <span className={`text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest ${f.status === 'NEW' ? 'bg-yellow-50 text-yellow-600' : f.status === 'RESOLVED' ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-500'}`}>{f.status}</span>
+                       </div>
+                    </div>
+                 ))
+              )}
+           </div>
+        </div>
+      )}
 
       {viewingSale && (
         <InvoiceModal sale={viewingSale} branch={branches.find(b => b.id === viewingSale.branchId)!} member={currentUser} plan={plans.find(p => p.id === (viewingSale.planId || '')) || { name: 'Retail Store Item', price: viewingSale.amount, durationDays: 0, branchId: viewingSale.branchId, isActive: true, id: '', type: PlanType.GYM }} onClose={() => setViewingSale(null)} />

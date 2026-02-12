@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../AppContext';
 import { Branch } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
@@ -10,6 +10,23 @@ const Branches: React.FC = () => {
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
+  const [qrToken, setQrToken] = useState<string>('');
+
+  // Generate dynamic QR code that refreshes every 15 seconds
+  useEffect(() => {
+    if (!qrModalOpen || !activeBranchId) return;
+
+    const generateToken = () => {
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(2, 10);
+      setQrToken(`${activeBranchId}|${timestamp}|${random}`);
+    };
+
+    generateToken(); // Generate immediately
+    const interval = setInterval(generateToken, 15000); // Refresh every 15 seconds
+
+    return () => clearInterval(interval);
+  }, [qrModalOpen, activeBranchId]);
   const [formData, setFormData] = useState({ 
     name: '', 
     address: '', 
@@ -27,7 +44,10 @@ const Branches: React.FC = () => {
     smsProvider: 'TWILIO' as 'TWILIO' | 'MSG91' | 'GUPSHUP',
     smsApiKey: '',
     smsSenderId: '',
-    equipment: ''
+    equipment: '',
+    latitude: 0,
+    longitude: 0,
+    geofenceRadius: 100
   });
 
   const getBranchStats = (branchId: string) => {
@@ -55,7 +75,10 @@ const Branches: React.FC = () => {
       smsProvider: 'TWILIO',
       smsApiKey: '',
       smsSenderId: '',
-      equipment: ''
+      equipment: '',
+      latitude: 0,
+      longitude: 0,
+      geofenceRadius: 100
     });
     setModalOpen(true);
   };
@@ -79,32 +102,40 @@ const Branches: React.FC = () => {
       smsProvider: branch.smsProvider || 'TWILIO',
       smsApiKey: branch.smsApiKey || '',
       smsSenderId: branch.smsSenderId || '',
-      equipment: branch.equipment || ''
+      equipment: branch.equipment || '',
+      latitude: branch.latitude || 0,
+      longitude: branch.longitude || 0,
+      geofenceRadius: branch.geofenceRadius || 100
     });
     setModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedBranch) {
-      updateBranch(selectedBranch.id, formData);
-    } else {
-      addBranch({
-        id: `b-${Date.now()}`,
-        ...formData
-      });
+    try {
+      if (selectedBranch) {
+        await updateBranch(selectedBranch.id, formData);
+      } else {
+        await addBranch({
+          id: `b-${Date.now()}`,
+          ...formData
+        });
+      }
+      setModalOpen(false);
+    } catch (err) {
+      console.error('Submit error:', err);
+      alert('Failed to save branch. Please try again.');
     }
-    setModalOpen(false);
   };
 
   const currentActiveBranch = branches.find(b => b.id === activeBranchId);
 
   const paymentPlaceholders = (() => {
     switch (formData.paymentProvider) {
-      case 'RAZORPAY': return { secret: 'Razorpay Key Secret', key: 'Razorpay Key ID (e.g. rzp_test_...)' };
-      case 'STRIPE': return { secret: 'Stripe Secret Key (sk_...)', key: 'Stripe Publishable Key (pk_...)' };
-      case 'PAYTM': return { secret: 'Merchant Key', key: 'Merchant ID (MID)' };
-      default: return { secret: 'Gateway API Key / Secret', key: 'Merchant ID / Public Key' };
+      case 'RAZORPAY': return { secret: 'Key ID (rzp_test_... or rzp_live_...)', key: 'Key Secret (for backend, optional)' };
+      case 'STRIPE': return { secret: 'Publishable Key (pk_...)', key: 'Secret Key (sk_..., optional)' };
+      case 'PAYTM': return { secret: 'Merchant ID (MID)', key: 'Merchant Key (optional)' };
+      default: return { secret: 'Public Key / Key ID', key: 'Secret Key (optional)' };
     }
   })();
 
@@ -151,6 +182,15 @@ const Branches: React.FC = () => {
                   <i className="fas fa-building text-xl"></i>
                 </div>
                 <div className="flex flex-col items-end">
+                   {branch.latitude && branch.longitude ? (
+                     <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 px-2 py-1 rounded mb-1 flex items-center gap-1">
+                        <i className="fas fa-location-dot"></i> GPS ACTIVE
+                     </span>
+                   ) : (
+                     <span className="text-[10px] font-black text-amber-500 bg-amber-50 px-2 py-1 rounded mb-1 flex items-center gap-1">
+                        <i className="fas fa-location-cross"></i> NO GPS
+                     </span>
+                   )}
                   <span className="text-[10px] font-black text-green-500 bg-green-50 px-2 py-1 rounded mb-1">ONLINE</span>
                   <div className="flex gap-1">
                     <span className="text-[7px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase">{branch.paymentProvider || 'NO PAY'}</span>
@@ -202,13 +242,18 @@ const Branches: React.FC = () => {
              <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight mb-2">Gate Entry QR</h3>
              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-8">{currentActiveBranch.name}</p>
              
-             <div className="bg-white p-8 rounded-[2.5rem] border-4 border-slate-50 shadow-inner flex items-center justify-center mb-8">
+             <div className="bg-white p-8 rounded-[2.5rem] border-4 border-slate-50 shadow-inner flex items-center justify-center mb-4">
                 <QRCodeSVG 
-                  value={currentActiveBranch.id} 
+                  value={qrToken || currentActiveBranch.id} 
                   size={200}
                   level="H"
                   includeMargin={true}
                 />
+             </div>
+             
+             <div className="flex items-center justify-center gap-2 mb-6">
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                <p className="text-[10px] text-slate-400 font-medium">Refreshes every 15 seconds</p>
              </div>
 
              <p className="text-[10px] text-slate-400 font-medium px-6 mb-8 uppercase tracking-widest">Members & Staff should scan this code using the IronFlow App Scanner to record attendance.</p>
@@ -238,6 +283,72 @@ const Branches: React.FC = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <input required placeholder="Phone" className="w-full p-3 bg-gray-50 border rounded-xl outline-none" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
                   <input required type="email" placeholder="Branch Public Email" className="w-full p-3 bg-gray-50 border rounded-xl outline-none text-xs" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                </div>
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                   <input placeholder="GSTIN (Tax ID)" className="w-full p-3 bg-gray-50 border rounded-xl outline-none text-xs font-mono uppercase" value={formData.gstin} onChange={e => setFormData({...formData, gstin: e.target.value})} />
+                   <div className="relative">
+                      <input type="number" required min="0" max="100" placeholder="GST Rate" className="w-full p-3 bg-gray-50 border rounded-xl outline-none text-xs font-bold" value={formData.gstPercentage} onChange={e => setFormData({...formData, gstPercentage: Number(e.target.value)})} />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">%</span>
+                   </div>
+                </div>
+
+                <div className="space-y-3 pt-2 border-t border-slate-100">
+                   <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <i className="fas fa-location-cross text-amber-500"></i> GPS Geofencing
+                      </label>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                           console.log('Auto-Locate clicked');
+                           if (navigator.geolocation) {
+                              console.log('Geolocation is supported');
+                              navigator.geolocation.getCurrentPosition((position) => {
+                                 console.log('Position received:', position.coords);
+                                 setFormData({
+                                    ...formData,
+                                    latitude: position.coords.latitude,
+                                    longitude: position.coords.longitude
+                                 });
+                                 alert(`Location captured: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`);
+                              }, (error) => {
+                                 console.error('Geolocation error:', error.code, error.message);
+                                 let errorMsg = 'Location access denied. Please enable GPS.';
+                                 switch (error.code) {
+                                    case error.PERMISSION_DENIED:
+                                       errorMsg = 'Location permission denied. Please allow location access in your browser settings.';
+                                       break;
+                                    case error.POSITION_UNAVAILABLE:
+                                       errorMsg = 'Location information unavailable. Please try again.';
+                                       break;
+                                    case error.TIMEOUT:
+                                       errorMsg = 'Location request timed out. Please try again.';
+                                       break;
+                                 }
+                                 alert(errorMsg);
+                              }, {
+                                 enableHighAccuracy: true,
+                                 timeout: 10000,
+                                 maximumAge: 0
+                              });
+                           } else {
+                              console.error('Geolocation not supported');
+                              alert('Geolocation is not supported by your browser.');
+                           }
+                        }}
+                        className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded uppercase tracking-widest hover:bg-blue-100 transition-colors flex items-center gap-1"
+                      >
+                         <i className="fas fa-crosshairs"></i> Auto-Locate
+                      </button>
+                   </div>
+                   <div className="grid grid-cols-2 gap-3">
+                     <input type="number" step="any" placeholder="Latitude" className="w-full p-3 bg-gray-50 border rounded-xl outline-none text-xs" value={formData.latitude} onChange={e => setFormData({...formData, latitude: Number(e.target.value)})} />
+                     <input type="number" step="any" placeholder="Longitude" className="w-full p-3 bg-gray-50 border rounded-xl outline-none text-xs" value={formData.longitude} onChange={e => setFormData({...formData, longitude: Number(e.target.value)})} />
+                   </div>
+                   <div className="relative">
+                      <input type="number" min="10" placeholder="Geofence Radius (Meters)" className="w-full p-3 bg-gray-50 border rounded-xl outline-none text-xs font-bold" value={formData.geofenceRadius} onChange={e => setFormData({...formData, geofenceRadius: Number(e.target.value)})} />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-gray-400">METERS</span>
+                   </div>
                 </div>
               </section>
 
@@ -290,8 +401,14 @@ const Branches: React.FC = () => {
                   <option value="STRIPE">Stripe (Global)</option>
                   <option value="PAYTM">Paytm (India)</option>
                 </select>
-                <input placeholder={paymentPlaceholders.secret} className="w-full p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl outline-none text-xs font-mono" value={formData.paymentApiKey} onChange={e => setFormData({...formData, paymentApiKey: e.target.value})} />
-                <input placeholder={paymentPlaceholders.key} className="w-full p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl outline-none text-xs font-mono" value={formData.paymentMerchantId} onChange={e => setFormData({...formData, paymentMerchantId: e.target.value})} />
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-indigo-500 uppercase">API Key ID (Required)</label>
+                  <input placeholder={paymentPlaceholders.secret} className="w-full p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl outline-none text-xs font-mono" value={formData.paymentApiKey} onChange={e => setFormData({...formData, paymentApiKey: e.target.value})} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-indigo-400 uppercase">API Key Secret (Optional)</label>
+                  <input placeholder={paymentPlaceholders.key} className="w-full p-3 bg-indigo-50/30 border border-indigo-100 rounded-xl outline-none text-xs font-mono" value={formData.paymentMerchantId} onChange={e => setFormData({...formData, paymentMerchantId: e.target.value})} />
+                </div>
               </section>
 
               <div className="pt-6">

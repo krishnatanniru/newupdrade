@@ -4,9 +4,10 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAppContext } from '../AppContext';
 import { NAV_ITEMS } from '../constants';
 import { UserRole } from '../types';
+import NotificationBell from './NotificationBell';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser, setCurrentUser, branches, updateUser } = useAppContext();
+  const { currentUser, logout, branches, updateUser, showToast } = useAppContext();
   const location = useLocation();
   const navigate = useNavigate();
   const [isSidebarOpen, setSidebarOpen] = useState(true);
@@ -19,6 +20,14 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     emergencyContact: currentUser?.emergencyContact || '',
     address: currentUser?.address || ''
   });
+  
+  // Password change state
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   if (!currentUser) return null;
 
@@ -29,8 +38,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const mobileBottomNavItems = filteredNav.slice(0, 5);
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('if_user');
+    logout();
     navigate('/login', { replace: true });
   };
 
@@ -38,6 +46,46 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     e.preventDefault();
     updateUser(currentUser.id, accountData);
     setIsAccountModalOpen(false);
+  };
+  
+  // Helper function to hash passwords
+  const hashPassword = async (password: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+  
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (passwordData.newPassword.length < 6) {
+      showToast('Password must be at least 6 characters', 'error');
+      return;
+    }
+    
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      showToast('New passwords do not match', 'error');
+      return;
+    }
+    
+    setIsChangingPassword(true);
+    
+    try {
+      // Hash the new password
+      const hashedPassword = await hashPassword(passwordData.newPassword);
+      
+      // Update user with new password
+      await updateUser(currentUser.id, { password: hashedPassword });
+      
+      showToast('Password updated successfully', 'success');
+      setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch {
+      showToast('Failed to update password', 'error');
+    } finally {
+      setIsChangingPassword(false);
+    }
   };
 
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
@@ -144,6 +192,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
           {/* Header Right: User Info */}
           <div className="flex items-center gap-3 md:gap-6 shrink-0 ml-auto pl-2">
+            <NotificationBell />
             <div className="hidden sm:flex flex-col text-right min-w-0 max-w-[150px]">
               <span className="text-[12px] md:text-sm font-black text-gray-900 truncate">{currentUser.name}</span>
               <span className="text-[8px] md:text-[9px] text-blue-600 font-black uppercase tracking-widest truncate">
@@ -265,12 +314,65 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </div>
               </div>
 
-              <div className="pt-4 space-y-3 shrink-0">
+              {/* Password Change Section */}
+              <div className="border-t border-slate-200 pt-6 mt-6">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                  <i className="fas fa-lock"></i> Change Password
+                </h4>
+                
+                <form onSubmit={handlePasswordChange} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">New Password</label>
+                    <div className="relative">
+                      <i className="fas fa-key absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
+                      <input 
+                        type="password"
+                        required
+                        minLength={6}
+                        className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                        value={passwordData.newPassword}
+                        onChange={e => setPasswordData({...passwordData, newPassword: e.target.value})}
+                        placeholder="Min 6 characters"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Confirm New Password</label>
+                    <div className="relative">
+                      <i className="fas fa-key absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
+                      <input 
+                        type="password"
+                        required
+                        minLength={6}
+                        className="w-full p-4 pl-12 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                        value={passwordData.confirmPassword}
+                        onChange={e => setPasswordData({...passwordData, confirmPassword: e.target.value})}
+                        placeholder="Confirm password"
+                      />
+                    </div>
+                  </div>
+                  
+                  <button 
+                    type="submit" 
+                    disabled={isChangingPassword}
+                    className="w-full py-3 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isChangingPassword ? (
+                      <><i className="fas fa-spinner fa-spin"></i> UPDATING...</>
+                    ) : (
+                      <><i className="fas fa-save"></i> UPDATE PASSWORD</>
+                    )}
+                  </button>
+                </form>
+              </div>
+
+              <div className="pt-4 space-y-3 shrink-0 border-t border-slate-200">
                 <button 
                   type="submit" 
                   className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95"
                 >
-                  SAVE CHANGES
+                  SAVE PROFILE CHANGES
                 </button>
                 <button 
                   type="button"

@@ -1,8 +1,8 @@
-
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User, Branch, Plan, Subscription, Sale, Attendance, Booking, Feedback, UserRole, SubscriptionStatus, Communication, CommType, InventoryItem, BodyMetric, Offer } from './types';
+import { User, Branch, Plan, Subscription, Sale, Attendance, Booking, Feedback, UserRole, SubscriptionStatus, Communication, CommType, InventoryItem, BodyMetric, Offer, ClassSession, Expense, Holiday } from './types';
 import { MOCK_USERS, BRANCHES, MOCK_PLANS, MOCK_SUBSCRIPTIONS, MOCK_OFFERS, MOCK_ATTENDANCE, MOCK_SALES, MOCK_BOOKINGS } from './constants';
 import { GoogleGenAI } from "@google/genai";
+import { supabase } from './src/lib/supabase';
 
 interface AppContextType {
   currentUser: User | null;
@@ -19,101 +19,296 @@ interface AppContextType {
   inventory: InventoryItem[];
   metrics: BodyMetric[];
   offers: Offer[];
+  classSchedules: ClassSession[];
+  expenses: Expense[];
+  holidays: Holiday[];
+  addHoliday: (holiday: Holiday, sendNotificationToUsers?: boolean) => Promise<void>;
+  deleteHoliday: (id: string) => Promise<void>;
+  sendHolidayNotification: (holiday: Holiday) => Promise<void>;
+  sendBranchNotification: (branchId: string, subject: string, message: string, targetRoles?: UserRole[]) => Promise<void>;
   settlementRate: number;
   setSettlementRate: (rate: number) => void;
   isGlobalLoading: boolean;
   setGlobalLoading: (loading: boolean) => void;
-  addBranch: (branch: Branch) => void;
-  updateBranch: (id: string, updates: Partial<Branch>) => void;
-  addUser: (user: User) => void;
-  updateUser: (id: string, updates: Partial<User>) => void;
-  deleteUser: (id: string) => void;
-  addPlan: (plan: Plan) => void;
-  updatePlan: (id: string, updates: Partial<Plan>) => void;
-  addSubscription: (sub: Subscription) => void;
-  addSale: (sale: Sale) => void;
-  recordAttendance: (att: Attendance) => void;
-  updateAttendance: (id: string, updates: Partial<Attendance>) => void;
-  addBooking: (booking: Booking) => void;
-  addFeedback: (fb: Feedback) => void;
-  updateFeedbackStatus: (id: string, status: Feedback['status']) => void;
-  addInventory: (item: InventoryItem) => void;
-  updateInventory: (id: string, updates: Partial<InventoryItem>) => void;
-  sellInventoryItem: (itemId: string, memberId: string, quantity: number) => void;
-  addMetric: (metric: BodyMetric) => void;
-  addOffer: (offer: Offer) => void;
-  deleteOffer: (id: string) => void;
-  enrollMember: (userData: Partial<User>, planId: string, trainerId?: string, password?: string) => Promise<void>;
-  purchaseSubscription: (userId: string, planId: string, paymentMethod: 'CASH' | 'CARD' | 'ONLINE', trainerId?: string) => Promise<void>;
-  sendNotification: (comm: Omit<Communication, 'id' | 'timestamp' | 'status'>) => void;
+  addBranch: (branch: Branch) => Promise<void>;
+  updateBranch: (id: string, updates: Partial<Branch>) => Promise<void>;
+  addUser: (user: User) => Promise<void>;
+  updateUser: (id: string, updates: Partial<User>) => Promise<void>;
+  deleteUser: (id: string) => Promise<void>;
+  addPlan: (plan: Plan) => Promise<void>;
+  updatePlan: (id: string, updates: Partial<Plan>) => Promise<void>;
+  addSubscription: (sub: Subscription) => Promise<void>;
+  addSale: (sale: Sale) => Promise<void>;
+  recordAttendance: (att: Attendance) => Promise<void>;
+  updateAttendance: (id: string, updates: Partial<Attendance>) => Promise<void>;
+  addBooking: (booking: Booking) => Promise<void>;
+  addFeedback: (fb: Feedback) => Promise<void>;
+  updateFeedbackStatus: (id: string, status: Feedback['status']) => Promise<void>;
+  addInventory: (item: InventoryItem) => Promise<void>;
+  updateInventory: (id: string, updates: Partial<InventoryItem>) => Promise<void>;
+  sellInventoryItem: (itemId: string, memberId: string, quantity: number) => Promise<void>;
+  addMetric: (metric: BodyMetric) => Promise<void>;
+  addOffer: (offer: Offer) => Promise<void>;
+  deleteOffer: (id: string) => Promise<void>;
+  addClassTemplate: (template: any) => Promise<void>;
+  deleteClassTemplate: (id: string) => Promise<void>;
+  generateUpcomingClasses: () => Promise<void>;
+  addClassSession: (session: ClassSession) => Promise<void>;
+  deleteClassSession: (id: string) => Promise<void>;
+  addExpense: (expense: Expense) => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
+  generateTransactionCode: (targetBranchId?: string) => Promise<string>;
+  verifyTransactionCode: (code: string) => Promise<boolean>;
+  enrollMember: (userData: Partial<User>, planId?: string, trainerId?: string, password?: string, discount?: number, paymentMethod?: 'CASH' | 'CARD' | 'ONLINE' | 'POS', startDate?: string) => Promise<void>;
+  purchaseSubscription: (userId: string, planId: string, paymentMethod: 'CASH' | 'CARD' | 'ONLINE' | 'POS', trainerId?: string, startDate?: string) => Promise<void>;
+  sendNotification: (comm: Omit<Communication, 'id' | 'timestamp' | 'status' | 'isRead'>) => Promise<void>;
+  markNotificationAsRead: (notificationId: string) => Promise<void>;
+  markAllNotificationsAsRead: () => Promise<void>;
   askGemini: (prompt: string, modelType?: 'flash' | 'pro') => Promise<string>;
   toast: { message: string; type: 'success' | 'error' } | null;
   showToast: (message: string, type?: 'success' | 'error') => void;
+  logout: () => void;
+  isAuthenticated: boolean;
+  refreshData: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const safeSave = (key: string, value: any) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (e) {
-    console.error(`Storage Error for ${key}:`, e);
-  }
-};
-
-const safeLoad = <T,>(key: string, fallback: T): T => {
-  const saved = localStorage.getItem(key);
-  try {
-    return saved ? JSON.parse(saved) : fallback;
-  } catch (e) {
-    console.warn(`Malformed data for ${key}, resetting to fallback.`);
-    return fallback;
-  }
-};
-
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User | null>(() => safeLoad('if_user', null));
-  const [branches, setBranches] = useState<Branch[]>(() => safeLoad('if_branches', BRANCHES));
-  const [users, setUsers] = useState<User[]>(() => safeLoad('if_users', MOCK_USERS));
-  const [plans, setPlans] = useState<Plan[]>(() => safeLoad('if_plans', MOCK_PLANS));
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>(() => safeLoad('if_subs', MOCK_SUBSCRIPTIONS));
-  const [sales, setSales] = useState<Sale[]>(() => safeLoad('if_sales', MOCK_SALES));
-  const [attendance, setAttendance] = useState<Attendance[]>(() => safeLoad('if_attendance', MOCK_ATTENDANCE));
-  const [bookings, setBookings] = useState<Booking[]>(() => safeLoad('if_bookings', MOCK_BOOKINGS));
-  const [feedback, setFeedback] = useState<Feedback[]>(() => safeLoad('if_feedback', []));
-  const [communications, setCommunications] = useState<Communication[]>(() => safeLoad('if_comms', []));
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => safeLoad('if_inventory', []));
-  const [metrics, setMetrics] = useState<BodyMetric[]>(() => safeLoad('if_metrics', []));
-  const [offers, setOffers] = useState<Offer[]>(() => safeLoad('if_offers', MOCK_OFFERS));
-  const [settlementRate, setSettlementRate] = useState<number>(() => safeLoad('if_settlement_rate', 250));
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [feedback, setFeedback] = useState<Feedback[]>([]);
+  const [communications, setCommunications] = useState<Communication[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [metrics, setMetrics] = useState<BodyMetric[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [classSchedules, setClassSchedules] = useState<ClassSession[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [settlementRate, setSettlementRate] = useState<number>(250);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isGlobalLoading, setGlobalLoading] = useState(false);
-
-  useEffect(() => safeSave('if_user', currentUser), [currentUser]);
-  useEffect(() => safeSave('if_branches', branches), [branches]);
-  useEffect(() => safeSave('if_users', users), [users]);
-  useEffect(() => safeSave('if_plans', plans), [plans]);
-  useEffect(() => safeSave('if_subs', subscriptions), [subscriptions]);
-  useEffect(() => safeSave('if_sales', sales), [sales]);
-  useEffect(() => safeSave('if_attendance', attendance), [attendance]);
-  useEffect(() => safeSave('if_bookings', bookings), [bookings]);
-  useEffect(() => safeSave('if_feedback', feedback), [feedback]);
-  useEffect(() => safeSave('if_comms', communications), [communications]);
-  useEffect(() => safeSave('if_inventory', inventory), [inventory]);
-  useEffect(() => safeSave('if_metrics', metrics), [metrics]);
-  useEffect(() => safeSave('if_offers', offers), [offers]);
-  useEffect(() => safeSave('if_settlement_rate', settlementRate), [settlementRate]);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
 
+  // Logout function
+  const logout = useCallback(async () => {
+    // Sign out from Supabase Auth
+    await supabase.auth.signOut();
+    localStorage.removeItem('ironflow_session');
+    setCurrentUser(null);
+    showToast('Logged out successfully', 'success');
+  }, [showToast]);
+
+  // Check for existing session on mount
+  useEffect(() => {
+    const checkSession = () => {
+      const session = localStorage.getItem('ironflow_session');
+      if (session) {
+        try {
+          const parsed = JSON.parse(session);
+          if (parsed.expiresAt && new Date(parsed.expiresAt) > new Date()) {
+            // Session valid, find user
+            const user = users.find(u => u.id === parsed.userId);
+            if (user) {
+              setCurrentUser(user);
+            } else {
+              localStorage.removeItem('ironflow_session');
+            }
+          } else {
+            // Session expired
+            localStorage.removeItem('ironflow_session');
+          }
+        } catch {
+          localStorage.removeItem('ironflow_session');
+        }
+      }
+    };
+    
+    if (users.length > 0) {
+      checkSession();
+    }
+  }, [users]);
+
+  // Session timeout check (every minute)
+  useEffect(() => {
+    if (!currentUser) return;
+    
+    const interval = setInterval(() => {
+      const session = localStorage.getItem('ironflow_session');
+      if (session) {
+        try {
+          const parsed = JSON.parse(session);
+          if (!parsed.expiresAt || new Date(parsed.expiresAt) <= new Date()) {
+            logout();
+            showToast('Session expired. Please login again.', 'error');
+          }
+        } catch {
+          logout();
+        }
+      }
+    }, 60000); // Check every minute
+    
+    return () => clearInterval(interval);
+  }, [currentUser, logout, showToast]);
+
+  // Listen to Supabase Auth state changes
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        // User signed in via Supabase Auth
+        console.log('Supabase Auth: User signed in');
+      } else if (event === 'SIGNED_OUT') {
+        // User signed out
+        setCurrentUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const isAuthenticated = !!currentUser;
+
+  const fetchData = async () => {
+    setGlobalLoading(true);
+    try {
+      const { data: bData } = await supabase.from('branches').select('*');
+      if (bData && bData.length > 0) setBranches(bData);
+      else {
+        const { error } = await supabase.from('branches').insert(BRANCHES);
+        if (!error) setBranches(BRANCHES);
+      }
+
+      const { data: uData } = await supabase.from('users').select('*');
+      if (uData && uData.length > 0) setUsers(uData);
+      else {
+        const { error } = await supabase.from('users').insert(MOCK_USERS);
+        if (!error) setUsers(MOCK_USERS);
+      }
+
+      const { data: pData } = await supabase.from('plans').select('*');
+      if (pData && pData.length > 0) setPlans(pData);
+      else {
+          const { error } = await supabase.from('plans').insert(MOCK_PLANS);
+          if (!error) setPlans(MOCK_PLANS);
+      }
+
+      const { data: sData } = await supabase.from('subscriptions').select('*');
+      if (sData) setSubscriptions(sData);
+
+      const { data: slData } = await supabase.from('sales').select('*');
+      if (slData) setSales(slData);
+
+      const { data: aData } = await supabase.from('attendance').select('*');
+      if (aData) setAttendance(aData);
+
+      const { data: bkData } = await supabase.from('bookings').select('*');
+      if (bkData) setBookings(bkData);
+
+      const { data: fData } = await supabase.from('feedback').select('*');
+      if (fData) setFeedback(fData);
+      
+      const { data: cData } = await supabase.from('communications').select('*');
+      if (cData) setCommunications(cData);
+
+      const { data: iData } = await supabase.from('inventory').select('*');
+      if (iData) setInventory(iData);
+
+      const { data: mData } = await supabase.from('metrics').select('*');
+      if (mData) setMetrics(mData);
+
+      const { data: oData } = await supabase.from('offers').select('*');
+      if (oData && oData.length > 0) setOffers(oData);
+      else {
+        const { error } = await supabase.from('offers').insert(MOCK_OFFERS);
+        if(!error) setOffers(MOCK_OFFERS);
+      }
+
+      const { data: csData } = await supabase.from('class_schedules').select('*');
+      if (csData) setClassSchedules(csData);
+
+      const { data: exData } = await supabase.from('expenses').select('*');
+      if (exData) setExpenses(exData);
+
+      const { data: hData } = await supabase.from('holidays').select('*');
+      if (hData) setHolidays(hData);
+
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      showToast('Error connecting to database', 'error');
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+
+    // Real-time Subscriptions for all tables
+    const channel = supabase.channel('db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, () => {
+         supabase.from('attendance').select('*').then(({ data }) => { if (data) setAttendance(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+         supabase.from('bookings').select('*').then(({ data }) => { if (data) setBookings(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'class_schedules' }, () => {
+         supabase.from('class_schedules').select('*').then(({ data }) => { if (data) setClassSchedules(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'communications' }, () => {
+         supabase.from('communications').select('*').then(({ data }) => { if (data) setCommunications(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => {
+         supabase.from('expenses').select('*').then(({ data }) => { if (data) setExpenses(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feedback' }, () => {
+         supabase.from('feedback').select('*').then(({ data }) => { if (data) setFeedback(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'holidays' }, () => {
+         supabase.from('holidays').select('*').then(({ data }) => { if (data) setHolidays(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, () => {
+         supabase.from('inventory').select('*').then(({ data }) => { if (data) setInventory(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'metrics' }, () => {
+         supabase.from('metrics').select('*').then(({ data }) => { if (data) setMetrics(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'offers' }, () => {
+         supabase.from('offers').select('*').then(({ data }) => { if (data) setOffers(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => {
+         supabase.from('sales').select('*').then(({ data }) => { if (data) setSales(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'subscriptions' }, () => {
+         supabase.from('subscriptions').select('*').then(({ data }) => { if (data) setSubscriptions(data); });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+         supabase.from('users').select('*').then(({ data }) => { if (data) setUsers(data); });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); }
+  }, []);
+
   const askGemini = async (prompt: string, modelType: 'flash' | 'pro' = 'flash') => {
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+      if (!apiKey) return 'API Key not configured.';
+      
+      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: modelType === 'pro' ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview',
+        model: modelType === 'pro' ? 'gemini-1.5-pro' : 'gemini-1.5-flash',
         contents: prompt,
       });
       return response.text || 'Unable to generate response.';
@@ -131,55 +326,142 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return `INV/${prefix}/${year}/${count}`;
   };
 
-  const addBranch = (b: Branch) => setBranches(prev => [...prev, b]);
-  const updateBranch = (id: string, updates: Partial<Branch>) => setBranches(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
-  const addUser = (u: User) => setUsers(prev => [...prev, u]);
-  const updateUser = (id: string, updates: Partial<User>) => {
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
-    if (currentUser?.id === id) setCurrentUser(prev => prev ? { ...prev, ...updates } : null);
-  };
-  const deleteUser = (id: string) => setUsers(prev => prev.filter(u => u.id !== id));
-  const addPlan = (p: Plan) => setPlans(prev => [...prev, p]);
-  const updatePlan = (id: string, updates: Partial<Plan>) => setPlans(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
-  const addSubscription = (s: Subscription) => setSubscriptions(prev => [...prev, s]);
-  const addSale = (s: Sale) => setSales(prev => [...prev, s]);
-  const recordAttendance = (a: Attendance) => setAttendance(prev => [...prev, a]);
-  const updateAttendance = (id: string, updates: Partial<Attendance>) => setAttendance(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
-  const addBooking = (b: Booking) => setBookings(prev => [...prev, b]);
-  const addFeedback = (f: Feedback) => setFeedback(prev => [...prev, f]);
-  const updateFeedbackStatus = (id: string, status: Feedback['status']) => setFeedback(prev => prev.map(f => f.id === id ? { ...f, status } : f));
-  const addInventory = (item: InventoryItem) => setInventory(prev => [...prev, item]);
-  const updateInventory = (id: string, updates: Partial<InventoryItem>) => setInventory(prev => prev.map(i => i.id === id ? { ...i, ...updates } : i));
-  const addMetric = (m: BodyMetric) => setMetrics(prev => [...prev, m]);
-  const addOffer = (o: Offer) => setOffers(prev => [...prev, o]);
-  const deleteOffer = (id: string) => setOffers(prev => prev.filter(o => o.id !== id));
-
-  const sendNotification = (comm: Omit<Communication, 'id' | 'timestamp' | 'status'>) => {
-    const user = users.find(u => u.id === comm.userId);
-    const bId = comm.branchId || user?.branchId || branches[0].id;
-    const branch = branches.find(b => b.id === bId);
-
-    // Using branch-specific credentials logic
-    if (comm.type === CommType.SMS && branch) {
-      console.log(`[SMS Gateway] Dispatched via ${branch.smsProvider || 'DEFAULT_SMS_GATEWAY'}`);
-      console.log(`[Credentials] Key: ${branch.smsApiKey ? branch.smsApiKey.substring(0, 4) + '****' : 'SYSTEM_KEY'}`);
-      console.log(`[Sender ID] ${branch.smsSenderId || 'IronFlow'}`);
-    } else if (comm.type === CommType.EMAIL && branch) {
-      console.log(`[Email Provider] Using ${branch.emailProvider || 'SYSTEM_SMTP'}`);
-      console.log(`[From Address] ${branch.emailFromAddress || 'noreply@ironflow.in'}`);
+  const addBranch = async (b: Branch) => {
+    const { error } = await supabase.from('branches').insert(b);
+    if (error) {
+      console.error('Add branch error:', error);
+      showToast('Failed to add branch: ' + error.message, 'error');
+      throw error;
+    } else {
+      setBranches(prev => [...prev, b]);
+      showToast('Branch added successfully', 'success');
     }
-
-    const newComm: Communication = {
-      ...comm,
-      id: `comm-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      timestamp: new Date().toLocaleString(),
-      status: 'DELIVERED',
-      branchId: bId
-    };
-    setCommunications(prev => [newComm, ...prev]);
   };
 
-  const sellInventoryItem = (itemId: string, memberId: string, quantity: number) => {
+  const updateBranch = async (id: string, updates: Partial<Branch>) => {
+    const { error } = await supabase.from('branches').update(updates).eq('id', id);
+    if (error) {
+      console.error('Update branch error:', error);
+      showToast('Failed to update branch: ' + error.message, 'error');
+      throw error;
+    } else {
+      setBranches(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
+      showToast('Branch updated successfully', 'success');
+    }
+  };
+
+  const addUser = async (u: User) => {
+    // Hash password if provided
+    const userToAdd = { ...u };
+    if (userToAdd.password) {
+      userToAdd.password = await hashPassword(userToAdd.password);
+    }
+    
+    const { error } = await supabase.from('users').insert(userToAdd);
+    if (!error) {
+      setUsers(prev => [...prev, userToAdd]);
+      showToast('User added successfully');
+    } else {
+      console.error(error);
+      showToast('Failed to add user', 'error');
+    }
+  };
+
+  const updateUser = async (id: string, updates: Partial<User>) => {
+    const { error } = await supabase.from('users').update(updates).eq('id', id);
+    if (!error) {
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
+      if (currentUser?.id === id) setCurrentUser(prev => prev ? { ...prev, ...updates } : null);
+      showToast('User updated');
+    } else showToast('Failed to update user', 'error');
+  };
+
+  const deleteUser = async (id: string) => {
+    const { error } = await supabase.from('users').delete().eq('id', id);
+    if (!error) {
+      setUsers(prev => prev.filter(u => u.id !== id));
+      showToast('User deleted');
+    } else showToast('Failed to delete user', 'error');
+  };
+
+  const addPlan = async (p: Plan) => {
+    const { error } = await supabase.from('plans').insert(p);
+    if (!error) {
+      setPlans(prev => [...prev, p]);
+      showToast('Plan created');
+    } else showToast('Failed to create plan', 'error');
+  };
+
+  const updatePlan = async (id: string, updates: Partial<Plan>) => {
+    const { error } = await supabase.from('plans').update(updates).eq('id', id);
+    if (!error) {
+      setPlans(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+      showToast('Plan updated');
+    } else showToast('Failed to update plan', 'error');
+  };
+
+  const addSubscription = async (s: Subscription) => {
+    const { error } = await supabase.from('subscriptions').insert(s);
+    if (!error) setSubscriptions(prev => [...prev, s]);
+    else showToast('Failed to add subscription', 'error');
+  };
+
+  const addSale = async (s: Sale) => {
+    const { error } = await supabase.from('sales').insert(s);
+    if (!error) setSales(prev => [...prev, s]);
+    else showToast('Failed to record sale', 'error');
+  };
+
+  const recordAttendance = async (a: Attendance) => {
+    const { error } = await supabase.from('attendance').insert(a);
+    if (!error) {
+      setAttendance(prev => [...prev, a]);
+      showToast('Attendance recorded');
+    } else showToast('Failed to record attendance', 'error');
+  };
+
+  const updateAttendance = async (id: string, updates: Partial<Attendance>) => {
+    const { error } = await supabase.from('attendance').update(updates).eq('id', id);
+    if (!error) setAttendance(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
+    else showToast('Failed to update attendance', 'error');
+  };
+
+  const addBooking = async (b: Booking) => {
+    const { error } = await supabase.from('bookings').insert(b);
+    if (!error) {
+      setBookings(prev => [...prev, b]);
+      showToast('Booking confirmed');
+    } else showToast('Booking failed', 'error');
+  };
+
+  const addFeedback = async (f: Feedback) => {
+    const { error } = await supabase.from('feedback').insert(f);
+    if (!error) {
+      setFeedback(prev => [...prev, f]);
+      showToast('Feedback submitted');
+    } else showToast('Failed to submit feedback', 'error');
+  };
+
+  const updateFeedbackStatus = async (id: string, status: Feedback['status']) => {
+    const { error } = await supabase.from('feedback').update({ status }).eq('id', id);
+    if (!error) setFeedback(prev => prev.map(f => f.id === id ? { ...f, status } : f));
+  };
+
+  const addInventory = async (item: InventoryItem) => {
+    const { error } = await supabase.from('inventory').insert(item);
+    if (!error) {
+      setInventory(prev => [...prev, item]);
+      showToast('Item added to inventory');
+    } else showToast('Failed to add item', 'error');
+  };
+
+  const updateInventory = async (id: string, updates: Partial<InventoryItem>) => {
+    const { error } = await supabase.from('inventory').update(updates).eq('id', id);
+    if (!error) setInventory(prev => prev.map(i => i.id === id ? { ...i, ...updates } : i));
+    else showToast('Failed to update inventory', 'error');
+  };
+
+  const sellInventoryItem = async (itemId: string, memberId: string, quantity: number) => {
     const item = inventory.find(i => i.id === itemId);
     if (!item || item.stock < quantity) {
       showToast('Insufficient stock!', 'error');
@@ -198,77 +480,446 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       branchId,
       paymentMethod: 'CASH'
     };
+    
+    const { error: stockError } = await supabase.from('inventory').update({ stock: item.stock - quantity }).eq('id', itemId);
+    if (stockError) {
+      showToast('Failed to update stock', 'error');
+      return;
+    }
+
+    const { error: saleError } = await supabase.from('sales').insert(newSale);
+    if (saleError) {
+      await supabase.from('inventory').update({ stock: item.stock }).eq('id', itemId);
+      showToast('Failed to record sale', 'error');
+      return;
+    }
+
     setInventory(prev => prev.map(i => i.id === itemId ? { ...i, stock: i.stock - quantity } : i));
     setSales(prev => [...prev, newSale]);
     showToast(`Sold ${item.name} x ${quantity}!`);
   };
 
-  const enrollMember = async (userData: Partial<User>, planId: string, trainerId?: string, password?: string) => {
-    setGlobalLoading(true);
-    await new Promise(r => setTimeout(r, 1000)); // Simulate API
-    const plan = plans.find(p => p.id === planId);
-    if (!plan) {
-      setGlobalLoading(false);
-      return;
+  const addMetric = async (m: BodyMetric) => {
+    const { error } = await supabase.from('metrics').insert(m);
+    if (!error) {
+      setMetrics(prev => [...prev, m]);
+      showToast('Metrics recorded');
+    } else showToast('Failed to record metrics', 'error');
+  };
+
+  const addOffer = async (o: Offer) => {
+    const { error } = await supabase.from('offers').insert(o);
+    if (!error) {
+      setOffers(prev => [...prev, o]);
+      showToast('Offer created');
+    } else showToast('Failed to create offer', 'error');
+  };
+
+  const deleteOffer = async (id: string) => {
+    const { error } = await supabase.from('offers').delete().eq('id', id);
+    if (!error) setOffers(prev => prev.filter(o => o.id !== id));
+  };
+
+  const addClassTemplate = async (template: any) => {
+    const { error } = await supabase.from('class_templates').insert(template);
+    if (!error) {
+      showToast('Weekly schedule updated');
+      generateUpcomingClasses(); // Regenerate based on new template
+    } else showToast('Failed to update schedule', 'error');
+  };
+
+  const deleteClassTemplate = async (id: string) => {
+    const { error } = await supabase.from('class_templates').delete().eq('id', id);
+    if (!error) {
+       showToast('Schedule removed');
+       // In a real app, you might want to also delete future unbooked sessions linked to this template
+       generateUpcomingClasses(); 
+    } else showToast('Failed to remove schedule', 'error');
+  };
+
+  const generateUpcomingClasses = async () => {
+     // Fetch templates
+     const { data: templates } = await supabase.from('class_templates').select('*');
+     if (!templates) return;
+
+     const newSessions: ClassSession[] = [];
+     const today = new Date();
+     const weeksToGenerate = 4;
+
+     // Fetch existing sessions to avoid duplicates (simple check based on date/time/trainer)
+     // In a production app, use a more robust upsert logic or ID generation
+     const { data: existingSessions } = await supabase.from('class_schedules').select('*').gte('date', today.toISOString().split('T')[0]);
+     const existingKeys = new Set(existingSessions?.map(s => `${s.trainerId}-${s.date}-${s.timeSlot}`));
+
+     for (let i = 0; i < weeksToGenerate * 7; i++) {
+        const date = new Date(today);
+        date.setDate(today.getDate() + i);
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+        const dateString = date.toISOString().split('T')[0];
+
+        const matchingTemplates = templates.filter(t => t.dayOfWeek === dayName);
+        
+        matchingTemplates.forEach(t => {
+           const key = `${t.trainerId}-${dateString}-${t.timeSlot}`;
+           if (!existingKeys.has(key)) {
+              newSessions.push({
+                 id: `sess-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                 templateId: t.id,
+                 trainerId: t.trainerId,
+                 date: dateString,
+                 timeSlot: t.timeSlot,
+                 title: t.title,
+                 capacity: t.capacity,
+                 branchId: t.branchId
+              });
+              existingKeys.add(key); // Prevent duplicates within same loop
+           }
+        });
+     }
+
+     if (newSessions.length > 0) {
+        const { error } = await supabase.from('class_schedules').insert(newSessions);
+        if (!error) {
+           setClassSchedules(prev => [...prev, ...newSessions]);
+           // console.log(`Generated ${newSessions.length} new class sessions.`);
+        }
+     }
+  };
+
+  const addClassSession = async (session: ClassSession) => {
+    const { error } = await supabase.from('class_schedules').insert(session);
+    if (!error) {
+      setClassSchedules(prev => [...prev, session]);
+      showToast('Class scheduled successfully');
+    } else showToast('Failed to schedule class', 'error');
+  };
+
+  const deleteClassSession = async (id: string) => {
+    const { error } = await supabase.from('class_schedules').delete().eq('id', id);
+    if (!error) setClassSchedules(prev => prev.filter(s => s.id !== id));
+    else showToast('Failed to cancel class', 'error');
+  };
+
+  const addExpense = async (expense: Expense) => {
+    const { error } = await supabase.from('expenses').insert(expense);
+    if (!error) {
+      setExpenses(prev => [...prev, expense]);
+      showToast('Expense recorded');
+    } else showToast('Failed to record expense', 'error');
+  };
+
+  const deleteExpense = async (id: string) => {
+    const { error } = await supabase.from('expenses').delete().eq('id', id);
+    if (!error) setExpenses(prev => prev.filter(e => e.id !== id));
+    else showToast('Failed to delete expense', 'error');
+  };
+
+  const addHoliday = async (holiday: Holiday, sendNotificationToUsers: boolean = false) => {
+    const { error } = await supabase.from('holidays').insert(holiday);
+    if (!error) {
+      setHolidays(prev => [...prev, holiday]);
+      showToast('Holiday added successfully');
+      
+      // Send notifications to users if requested
+      if (sendNotificationToUsers) {
+        await sendHolidayNotification(holiday);
+      }
+    } else showToast('Failed to add holiday', 'error');
+  };
+
+  const sendHolidayNotification = async (holiday: Holiday) => {
+    const branchName = holiday.branchId === 'ALL' 
+      ? 'All Branches' 
+      : branches.find(b => b.id === holiday.branchId)?.name || 'Your Branch';
+    
+    // Get users who should receive this notification
+    const targetUsers = users.filter(u => 
+      holiday.branchId === 'ALL' || u.branchId === holiday.branchId
+    );
+    
+    // Send notification to each user
+    for (const user of targetUsers) {
+      await sendNotification({
+        userId: user.id,
+        type: CommType.SMS, // Still use SMS type for categorization
+        recipient: user.phone || user.email || 'In-App',
+        subject: `📅 Holiday Notice: ${holiday.name}`,
+        body: `Important Update: ${holiday.name} is scheduled for ${holiday.date}. ${branchName} will be closed on this day. Please plan your workouts accordingly. You can view this notification in the Communications section.`,
+        category: 'HOLIDAY',
+        branchId: holiday.branchId
+      });
     }
+    
+    showToast(`Holiday notification sent to ${targetUsers.length} users (In-App Only)`, 'success');
+  };
+
+  const sendBranchNotification = async (branchId: string, subject: string, message: string, targetRoles?: UserRole[]) => {
+    const branchName = branchId === 'ALL' 
+      ? 'All Branches' 
+      : branches.find(b => b.id === branchId)?.name || 'Your Branch';
+    
+    // Filter users by branch and optionally by role
+    let targetUsers = users.filter(u => 
+      branchId === 'ALL' || u.branchId === branchId
+    );
+    
+    if (targetRoles && targetRoles.length > 0) {
+      targetUsers = targetUsers.filter(u => targetRoles.includes(u.role));
+    }
+    
+    // Send notification to each user
+    for (const user of targetUsers) {
+      await sendNotification({
+        userId: user.id,
+        type: CommType.SMS, // Still use SMS type for categorization
+        recipient: user.phone || user.email || 'In-App',
+        subject: `📢 ${subject}`,
+        body: `${message}\n\nThis is an important announcement for ${branchName}. You can view all notifications in the Communications section of the app.`,
+        category: 'ANNOUNCEMENT',
+        branchId: branchId
+      });
+    }
+    
+    showToast(`Notification sent to ${targetUsers.length} users (In-App Only)`, 'success');
+  };
+
+  const deleteHoliday = async (id: string) => {
+    const { error } = await supabase.from('holidays').delete().eq('id', id);
+    if (!error) {
+      setHolidays(prev => prev.filter(h => h.id !== id));
+      showToast('Holiday deleted');
+    } else showToast('Failed to delete holiday', 'error');
+  };
+
+  const generateTransactionCode = async (targetBranchId?: string): Promise<string> => {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const branchToUse = targetBranchId || currentUser?.branchId || branches[0].id;
+    
+    const { error } = await supabase.from('transaction_codes').insert({
+      code,
+      branchId: branchToUse,
+      status: 'VALID',
+      generatedBy: currentUser?.id
+    });
+    
+    if (error) {
+       console.error('Error generating PIN:', error);
+       showToast('Failed to generate PIN', 'error');
+       return '';
+    }
+    return code;
+  };
+
+  const verifyTransactionCode = async (code: string): Promise<boolean> => {
+    const { data, error } = await supabase
+      .from('transaction_codes')
+      .select('*')
+      .eq('code', code)
+      .eq('status', 'VALID')
+      .single();
+
+    if (error || !data) {
+      return false;
+    }
+
+    // Mark as used
+    await supabase
+      .from('transaction_codes')
+      .update({ status: 'USED' })
+      .eq('code', code);
+      
+    return true;
+  };
+
+  const sendNotification = async (comm: Omit<Communication, 'id' | 'timestamp' | 'status' | 'isRead'>) => {
+    const user = users.find(u => u.id === comm.userId);
+    const bId = comm.branchId || user?.branchId || branches[0]?.id;
+    
+    const newComm: Communication = {
+      ...comm,
+      id: `comm-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      timestamp: new Date().toISOString(),
+      status: 'DELIVERED', // In-app notifications are always "delivered"
+      branchId: bId,
+      isRead: false
+    };
+
+    // Only store in database (no SMS/email sending)
+    const { error } = await supabase.from('communications').insert(newComm);
+    if (!error) {
+      setCommunications(prev => [newComm, ...prev]);
+      showToast('Notification sent successfully', 'success');
+    } else {
+      showToast('Failed to send notification', 'error');
+    }
+  };
+
+  const markNotificationAsRead = async (notificationId: string) => {
+    const { error } = await supabase
+      .from('communications')
+      .update({ isRead: true })
+      .eq('id', notificationId);
+    
+    if (!error) {
+      setCommunications(prev => 
+        prev.map(comm => 
+          comm.id === notificationId ? { ...comm, isRead: true } : comm
+        )
+      );
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    if (!currentUser) return;
+    
+    // Get user's notifications that are unread
+    const userNotifications = communications.filter(comm => 
+      (comm.branchId === 'ALL' || comm.branchId === currentUser.branchId) &&
+      !comm.isRead
+    );
+    
+    if (userNotifications.length === 0) return;
+    
+    const { error } = await supabase
+      .from('communications')
+      .update({ isRead: true })
+      .in('id', userNotifications.map(n => n.id));
+    
+    if (!error) {
+      setCommunications(prev => 
+        prev.map(comm => 
+          userNotifications.some(n => n.id === comm.id) ? { ...comm, isRead: true } : comm
+        )
+      );
+    }
+  };
+
+  // Helper function to hash passwords
+  const hashPassword = async (password: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  // Helper function to generate secure random password
+  const generateSecurePassword = (): string => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*';
+    let password = '';
+    
+    // Ensure at least one of each type
+    password += chars.charAt(Math.floor(Math.random() * 26)); // uppercase
+    password += chars.charAt(Math.floor(Math.random() * 26) + 26); // lowercase
+    password += chars.charAt(Math.floor(Math.random() * 10) + 52); // number
+    password += chars.charAt(Math.floor(Math.random() * 7) + 62); // special char
+    
+    // Fill remaining 4 characters randomly
+    for (let i = 0; i < 4; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    
+    // Shuffle the password
+    return password.split('').sort(() => Math.random() - 0.5).join('');
+  };
+
+  const enrollMember = async (userData: Partial<User>, planId?: string, trainerId?: string, password?: string, discount: number = 0, paymentMethod: 'CASH' | 'CARD' | 'ONLINE' | 'POS' = 'ONLINE', startDate?: string) => {
+    setGlobalLoading(true);
+    const plan = planId ? plans.find(p => p.id === planId) : undefined;
     const branchId = userData.branchId || currentUser?.branchId || branches[0].id;
     const newUserId = `u-${Date.now()}`;
+    const membershipStartDate = startDate || new Date().toISOString().split('T')[0];
+    
+    // Generate password if not provided (for staff enrollments)
+    const usePassword = password || generateSecurePassword();
+    const hashedPassword = await hashPassword(usePassword);
+    
     const newUser: User = {
       id: newUserId,
       name: userData.name || 'New Member',
       email: userData.email || '',
-      password: password, // Store chosen password
+      password: hashedPassword, 
       role: UserRole.MEMBER,
       branchId,
       memberId: `IF-IND-${Math.floor(1000 + Math.random() * 9000)}`,
-      avatar: `https://i.pravatar.cc/150?u=${newUserId}`,
+      avatar: userData.avatar || `https://i.pravatar.cc/150?u=${newUserId}`,
       emergencyContact: userData.emergencyContact,
       address: userData.address,
       phone: userData.phone
     };
-    const newSub: Subscription = {
-      id: `s-${Date.now()}`,
-      memberId: newUserId,
-      planId: planId,
-      startDate: new Date().toISOString().split('T')[0],
-      endDate: new Date(Date.now() + plan.durationDays * 86400000).toISOString().split('T')[0],
-      status: SubscriptionStatus.ACTIVE,
-      branchId,
-      trainerId
-    };
-    const newSale: Sale = {
-      id: `sale-${Date.now()}`,
-      invoiceNo: generateInvoiceNo(branchId),
-      date: new Date().toISOString().split('T')[0],
-      amount: plan.price,
-      memberId: newUserId,
-      planId: planId,
-      staffId: currentUser?.id || 'admin',
-      branchId,
-      paymentMethod: 'ONLINE',
-      trainerId
-    };
-    setUsers(prev => [...prev, newUser]);
-    setSubscriptions(prev => [...prev, newSub]);
-    setSales(prev => [...prev, newSale]);
 
-    // Send Welcome Notification via SMS using branch credentials
-    sendNotification({
-      userId: newUserId,
-      type: CommType.SMS,
-      recipient: userData.phone || userData.email || 'N/A',
-      body: `Welcome to IronFlow! Your athlete ID is ${newUser.memberId}. Login with your chosen token. Valid until ${newSub.endDate}.`,
-      category: 'WELCOME',
-      branchId: branchId
-    });
+    try {
+      // Always create the user
+      await supabase.from('users').insert(newUser);
+      setUsers(prev => [...prev, newUser]);
 
-    setGlobalLoading(false);
-    showToast(`Member enrolled! Invoice: ${newSale.invoiceNo}`);
+      // If plan is provided, create subscription and sale
+      if (plan) {
+        const newSub: Subscription = {
+          id: `s-${Date.now()}`,
+          memberId: newUserId,
+          planId: planId!,
+          startDate: membershipStartDate,
+          endDate: new Date(new Date(membershipStartDate).getTime() + plan.durationDays * 86400000).toISOString().split('T')[0],
+          status: SubscriptionStatus.ACTIVE,
+          branchId,
+          trainerId
+        };
+        const finalAmount = Math.max(0, plan.price - discount);
+        const newSale: Sale = {
+          id: `sale-${Date.now()}`,
+          invoiceNo: generateInvoiceNo(branchId),
+          date: new Date().toISOString().split('T')[0],
+          amount: finalAmount,
+          discount,
+          memberId: newUserId,
+          planId: planId!,
+          staffId: currentUser?.id || 'admin',
+          branchId,
+          paymentMethod: 'ONLINE',
+          trainerId
+        };
+
+        await supabase.from('subscriptions').insert(newSub);
+        await supabase.from('sales').insert(newSale);
+        setSubscriptions(prev => [...prev, newSub]);
+        setSales(prev => [...prev, newSale]);
+
+        await sendNotification({
+          userId: newUserId,
+          type: CommType.SMS,
+          recipient: 'In-App',
+          subject: `Welcome to IronFlow! 🎉`,
+          body: `Welcome ${newUser.name}! Your athlete ID is ${newUser.memberId}. Your temporary login token is: ${usePassword}. You can login now and change your token in Settings. This is an important notification - please check the Communications section for more details.`,
+          category: 'WELCOME',
+          branchId: branchId
+        });
+
+        showToast(`Member enrolled! Invoice: ${newSale.invoiceNo}. Welcome notification sent (In-App Only).`);
+      } else {
+        // No plan - just user registration
+        await sendNotification({
+          userId: newUserId,
+          type: CommType.SMS,
+          recipient: 'In-App',
+          subject: `Welcome to IronFlow! 🎉`,
+          body: `Welcome ${newUser.name}! Your athlete ID is ${newUser.memberId}. Your temporary login token is: ${usePassword}. Login to purchase a membership and get started. This is an important notification - please check the Communications section for more details.`,
+          category: 'WELCOME',
+          branchId: branchId
+        });
+
+        showToast(`Account created! Welcome notification sent (In-App Only). Please login to purchase a membership.`);
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Enrollment failed', 'error');
+    } finally {
+      setGlobalLoading(false);
+    }
   };
 
-  const purchaseSubscription = async (userId: string, planId: string, paymentMethod: 'CASH' | 'CARD' | 'ONLINE', trainerId?: string) => {
+  const purchaseSubscription = async (userId: string, planId: string, paymentMethod: 'CASH' | 'CARD' | 'ONLINE', trainerId?: string, startDate?: string) => {
     setGlobalLoading(true);
-    await new Promise(r => setTimeout(r, 1500)); // Simulate API
     const plan = plans.find(p => p.id === planId);
     const user = users.find(u => u.id === userId);
     if (!plan || !user) {
@@ -276,12 +927,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     const branchId = user.branchId!;
+    const membershipStartDate = startDate || new Date().toISOString().split('T')[0];
     const newSub: Subscription = {
       id: `s-${Date.now()}`,
       memberId: userId,
       planId: planId,
-      startDate: new Date().toISOString().split('T')[0],
-      endDate: new Date(Date.now() + plan.durationDays * 86400000).toISOString().split('T')[0],
+      startDate: membershipStartDate,
+      endDate: new Date(new Date(membershipStartDate).getTime() + plan.durationDays * 86400000).toISOString().split('T')[0],
       status: SubscriptionStatus.ACTIVE,
       branchId,
       trainerId
@@ -298,31 +950,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       paymentMethod,
       trainerId
     };
-    setSubscriptions(prev => [...prev, newSub]);
-    setSales(prev => [...prev, newSale]);
 
-    // Send Renewal Confirmation
-    sendNotification({
-      userId: userId,
-      type: CommType.SMS,
-      recipient: user.phone || user.email || 'N/A',
-      body: `Payment successful! Your ${plan.name} is active until ${newSub.endDate}. Ref: ${newSale.invoiceNo}`,
-      category: 'PAYMENT',
-      branchId: branchId
-    });
+    try {
+      await supabase.from('subscriptions').insert(newSub);
+      await supabase.from('sales').insert(newSale);
+      
+      setSubscriptions(prev => [...prev, newSub]);
+      setSales(prev => [...prev, newSale]);
 
-    setGlobalLoading(false);
-    showToast(`Payment received! Invoice: ${newSale.invoiceNo}`);
+      await sendNotification({
+        userId: userId,
+        type: CommType.SMS,
+        recipient: 'In-App',
+        subject: `💳 Payment Confirmation`,
+        body: `Payment successful! Your ${plan.name} membership is now active until ${newSub.endDate}. Reference: ${newSale.invoiceNo}. This is an important notification - please check the Communications section for payment details.`,
+        category: 'PAYMENT',
+        branchId: branchId
+      });
+
+      showToast(`Payment received! Invoice: ${newSale.invoiceNo} (Notification sent in-app)`);
+    } catch (e) {
+      console.error(e);
+      showToast('Transaction failed', 'error');
+    } finally {
+      setGlobalLoading(false);
+    }
   };
 
   return (
     <AppContext.Provider value={{
       currentUser, setCurrentUser, branches, users, plans, subscriptions, sales, 
       attendance, bookings, feedback, communications, inventory, metrics, offers,
+      classSchedules, addClassTemplate, deleteClassTemplate, generateUpcomingClasses, addClassSession, deleteClassSession,
+      expenses, addExpense, deleteExpense,
+      holidays, addHoliday, deleteHoliday, sendHolidayNotification, sendBranchNotification,
       settlementRate, setSettlementRate, isGlobalLoading, setGlobalLoading,
       addBranch, updateBranch, addUser, updateUser, deleteUser, addPlan, updatePlan,
       addSubscription, addSale, recordAttendance, updateAttendance, addBooking, addFeedback, updateFeedbackStatus,
-      addInventory, updateInventory, sellInventoryItem, addMetric, addOffer, deleteOffer, enrollMember, purchaseSubscription, sendNotification, askGemini, toast, showToast
+      addInventory, updateInventory, sellInventoryItem, addMetric, addOffer, deleteOffer, enrollMember, purchaseSubscription, generateTransactionCode, verifyTransactionCode, sendNotification, markNotificationAsRead, markAllNotificationsAsRead, askGemini, toast, showToast, logout, isAuthenticated, refreshData: fetchData
     }}>
       {children}
       {toast && (

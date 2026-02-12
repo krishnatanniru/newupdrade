@@ -1,14 +1,19 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../AppContext';
 import { UserRole, User, Attendance, Shift } from '../types';
+import { ImageUploadModal } from '../components/ImageUploadModal';
+import { generateMonthlyPayroll, getShiftSummary } from '../src/lib/payroll';
 
 const Staff: React.FC = () => {
-  const { users, branches, currentUser, addUser, updateUser, deleteUser, attendance } = useAppContext();
+  const { users, branches, currentUser, addUser, updateUser, deleteUser, attendance, bookings, holidays } = useAppContext();
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [isEditModalOpen, setEditModalOpen] = useState(false);
   const [isLogsModalOpen, setLogsModalOpen] = useState(false);
+  const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState<User | null>(null);
+  const [payrollMonth, setPayrollMonth] = useState(new Date().getMonth());
+  const [payrollYear, setPayrollYear] = useState(new Date().getFullYear());
 
   const [formData, setFormData] = useState({
     name: '',
@@ -18,8 +23,11 @@ const Staff: React.FC = () => {
     shifts: [{ start: '09:00', end: '13:00' }] as Shift[],
     hourlyRate: 500,
     commissionPercentage: 10,
-    emergencyContact: ''
+    emergencyContact: '',
+    avatar: '',
+    weekOffDay: 0 // Default to Sunday
   });
+  const [isImageModalOpen, setImageModalOpen] = useState(false);
 
   const staffMembers = users.filter(u => 
     u.role !== UserRole.MEMBER && 
@@ -35,7 +43,9 @@ const Staff: React.FC = () => {
       shifts: [{ start: '09:00', end: '13:00' }],
       hourlyRate: 500,
       commissionPercentage: 10,
-      emergencyContact: ''
+      emergencyContact: '',
+      avatar: '',
+      weekOffDay: 0
     });
     setAddModalOpen(true);
   };
@@ -50,15 +60,37 @@ const Staff: React.FC = () => {
       shifts: staff.shifts && staff.shifts.length > 0 ? staff.shifts : [{ start: '09:00', end: '13:00' }],
       hourlyRate: staff.hourlyRate || 500,
       commissionPercentage: staff.commissionPercentage || 0,
-      emergencyContact: staff.emergencyContact || ''
+      emergencyContact: staff.emergencyContact || '',
+      avatar: staff.avatar || '',
+      weekOffDay: staff.weekOffDay ?? 0
     });
     setEditModalOpen(true);
+  };
+
+  const handleImageUpload = (url: string) => {
+    setFormData({ ...formData, avatar: url });
   };
 
   const handleOpenLogs = (staff: User) => {
     setSelectedStaff(staff);
     setLogsModalOpen(true);
   };
+
+  const handleOpenPayroll = (staff: User) => {
+    setSelectedStaff(staff);
+    setIsPayrollModalOpen(true);
+  };
+
+  // Filter holidays for selected staff's branch
+  const staffHolidays = useMemo(() => {
+    if (!selectedStaff) return [];
+    return holidays.filter(h => h.branchId === 'ALL' || h.branchId === selectedStaff.branchId);
+  }, [selectedStaff, holidays]);
+
+  const selectedStaffPayroll = useMemo(() => {
+    if (!selectedStaff) return null;
+    return generateMonthlyPayroll(selectedStaff, attendance, payrollYear, payrollMonth + 1, bookings, staffHolidays);
+  }, [selectedStaff, attendance, payrollYear, payrollMonth, bookings, staffHolidays]);
 
   const handleAddStaff = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,7 +104,8 @@ const Staff: React.FC = () => {
       hourlyRate: formData.hourlyRate,
       commissionPercentage: formData.commissionPercentage,
       emergencyContact: formData.emergencyContact,
-      avatar: `https://i.pravatar.cc/150?u=${Date.now()}`
+      avatar: formData.avatar || `https://i.pravatar.cc/150?u=${Date.now()}`,
+      weekOffDay: formData.weekOffDay
     };
     addUser(newStaff);
     setAddModalOpen(false);
@@ -223,6 +256,13 @@ const Staff: React.FC = () => {
                       <td className="px-6 py-5 text-right pr-8">
                         <div className="flex justify-end gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                           <button 
+                            onClick={() => handleOpenPayroll(staff)}
+                            className="p-2.5 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+                            title="View Payroll"
+                          >
+                            <i className="fas fa-file-invoice-dollar"></i>
+                          </button>
+                          <button 
                             onClick={() => handleOpenLogs(staff)}
                             className="p-2.5 text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
                             title="Attendance Logs"
@@ -318,6 +358,24 @@ const Staff: React.FC = () => {
             </div>
             
             <form onSubmit={isEditModalOpen ? handleUpdateStaff : handleAddStaff} className="p-10 space-y-6 max-h-[70vh] overflow-y-auto scrollbar-hide">
+              <div className="flex flex-col items-center gap-3">
+                <div className="relative">
+                  <img 
+                    src={formData.avatar || selectedStaff?.avatar || 'https://i.pravatar.cc/150?u=default'} 
+                    alt="Profile" 
+                    className="w-24 h-24 rounded-2xl object-cover border-4 border-white shadow-lg"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setImageModalOpen(true)}
+                    className="absolute -bottom-2 -right-2 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <i className="fas fa-camera text-xs"></i>
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 font-medium">Click camera to change photo</p>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Full Name</label>
                 <input required className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
@@ -364,13 +422,27 @@ const Staff: React.FC = () => {
                 </div>
               )}
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Home Branch</label>
-                <select className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none font-bold text-xs uppercase" value={formData.branchId} onChange={e => setFormData({ ...formData, branchId: e.target.value })}>
-                  {branches.map(b => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Home Branch</label>
+                  <select className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none font-bold text-xs uppercase" value={formData.branchId} onChange={e => setFormData({ ...formData, branchId: e.target.value })}>
+                    {branches.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest ml-1">Weekly Off Day</label>
+                  <select className="w-full p-4 bg-amber-50 border border-amber-100 rounded-2xl outline-none font-bold text-xs uppercase" value={formData.weekOffDay} onChange={e => setFormData({ ...formData, weekOffDay: Number(e.target.value) })}>
+                    <option value={0}>Sunday</option>
+                    <option value={1}>Monday</option>
+                    <option value={2}>Tuesday</option>
+                    <option value={3}>Wednesday</option>
+                    <option value={4}>Thursday</option>
+                    <option value={5}>Friday</option>
+                    <option value={6}>Saturday</option>
+                  </select>
+                </div>
               </div>
 
               <div className="pt-6 border-t border-gray-100 space-y-4">
@@ -425,6 +497,111 @@ const Staff: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Payroll Modal */}
+      {isPayrollModalOpen && selectedStaff && selectedStaffPayroll && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-[2rem] shadow-2xl overflow-hidden animate-[slideUp_0.3s_ease-out] max-h-[90vh] overflow-y-auto">
+            <div className="bg-emerald-600 p-6 text-white flex justify-between items-center sticky top-0 z-10">
+               <div>
+                  <h3 className="text-xl font-black uppercase tracking-tight">Payroll Details</h3>
+                  <p className="text-[10px] text-emerald-100 font-bold uppercase tracking-widest">{selectedStaff.name} • {selectedStaff.role.replace('_', ' ')}</p>
+               </div>
+               <button onClick={() => setIsPayrollModalOpen(false)} className="bg-white/20 hover:bg-white/30 p-3 rounded-2xl transition-colors">
+                  <i className="fas fa-times"></i>
+               </button>
+            </div>
+            
+            <div className="p-8 space-y-6">
+               {/* Month Selector */}
+               <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-2xl">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Period:</label>
+                  <select 
+                    className="p-2 bg-white border rounded-xl font-bold text-xs"
+                    value={payrollMonth}
+                    onChange={(e) => setPayrollMonth(Number(e.target.value))}
+                  >
+                    {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((m, i) => (
+                      <option key={m} value={i}>{m}</option>
+                    ))}
+                  </select>
+                  <select 
+                    className="p-2 bg-white border rounded-xl font-bold text-xs"
+                    value={payrollYear}
+                    onChange={(e) => setPayrollYear(Number(e.target.value))}
+                  >
+                    {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+               </div>
+
+               {/* Shifts Info */}
+               <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">Assigned Shifts</p>
+                  <p className="text-sm font-medium text-blue-800">{getShiftSummary(selectedStaff.shifts || [])}</p>
+               </div>
+
+               {/* Attendance Summary */}
+               <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl text-center">
+                     <p className="text-2xl font-black text-slate-900">{selectedStaffPayroll.totalDaysWorked}</p>
+                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Days Worked</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl text-center">
+                     <p className="text-2xl font-black text-slate-900">{selectedStaffPayroll.totalHoursWorked.toFixed(1)}</p>
+                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Hours Logged</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl text-center">
+                     <p className="text-2xl font-black text-slate-900">{selectedStaffPayroll.weekOffsTaken}</p>
+                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Week Offs</p>
+                  </div>
+               </div>
+
+               {/* Earnings Breakdown */}
+               <div className="space-y-3">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Earnings Breakdown</p>
+                  
+                  <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                     <span className="text-sm font-medium text-slate-600">Base Salary ({selectedStaffPayroll.totalHoursWorked.toFixed(1)}h × ₹{selectedStaff.hourlyRate || 0})</span>
+                     <span className="font-bold text-slate-900">₹{selectedStaffPayroll.baseSalary.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                     <span className="text-sm font-medium text-slate-600">Week Off Pay ({selectedStaffPayroll.weekOffsTaken} × 9h)</span>
+                     <span className="font-bold text-purple-600">+₹{selectedStaffPayroll.weekOffPay.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                     <span className="text-sm font-medium text-slate-600">Holiday Pay</span>
+                     <span className="font-bold text-orange-600">+₹{selectedStaffPayroll.holidayPay.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                     <span className="text-sm font-medium text-slate-600">Commission ({selectedStaff.commissionPercentage || 0}%)</span>
+                     <span className="font-bold text-emerald-600">+₹{selectedStaffPayroll.commissionEarned.toLocaleString()}</span>
+                  </div>
+               </div>
+
+               {/* Total */}
+               <div className="bg-emerald-50 p-6 rounded-2xl border border-emerald-100">
+                  <div className="flex justify-between items-center">
+                     <div>
+                        <p className="text-lg font-black text-emerald-900 uppercase">Net Pay</p>
+                        <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">
+                           {selectedStaffPayroll.lateDays > 0 && `${selectedStaffPayroll.lateDays} late • `}
+                           {selectedStaffPayroll.earlyOutDays > 0 && `${selectedStaffPayroll.earlyOutDays} early out`}
+                        </p>
+                     </div>
+                     <p className="text-3xl font-black text-emerald-700">₹{selectedStaffPayroll.netPay.toLocaleString()}</p>
+                  </div>
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ImageUploadModal
+        isOpen={isImageModalOpen}
+        onClose={() => setImageModalOpen(false)}
+        onUpload={handleImageUpload}
+        title="Update Staff Photo"
+      />
+
       <style>{`
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .scrollbar-hide::-webkit-scrollbar { display: none; }

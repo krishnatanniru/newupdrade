@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useAppContext } from '../AppContext';
-import { Sale } from '../types';
+import { Sale, UserRole } from '../types';
 import InvoiceModal from '../components/InvoiceModal';
 
 const formatCurrency = (amount: number) => {
@@ -13,8 +13,10 @@ const formatCurrency = (amount: number) => {
 };
 
 const Sales: React.FC = () => {
-  const { sales, users, plans, branches, currentUser } = useAppContext();
+  const { sales, users, plans, branches, currentUser, generateTransactionCode } = useAppContext();
   const [viewingSale, setViewingSale] = useState<Sale | null>(null);
+  const [generatedPIN, setGeneratedPIN] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const filteredSales = currentUser?.role === 'SUPER_ADMIN' 
     ? sales 
@@ -24,6 +26,15 @@ const Sales: React.FC = () => {
 
   const closeInvoice = () => setViewingSale(null);
 
+  const [selectedBranchForPIN, setSelectedBranchForPIN] = useState(currentUser?.branchId || branches[0].id);
+
+  const handleGeneratePIN = async () => {
+    setIsGenerating(true);
+    const pin = await generateTransactionCode(selectedBranchForPIN);
+    setGeneratedPIN(pin);
+    setIsGenerating(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -31,11 +42,43 @@ const Sales: React.FC = () => {
           <h2 className="text-2xl font-bold text-gray-900">Revenue & Sales</h2>
           <p className="text-gray-500">Real-time financial tracking across branches</p>
         </div>
-        <div className="bg-white px-6 py-3 rounded-2xl border shadow-sm">
-           <p className="text-[10px] font-bold text-gray-400 uppercase">Total Period Revenue</p>
-           <p className="text-xl font-black text-green-600">{formatCurrency(totalRev)}</p>
+        <div className="flex items-center gap-4">
+          {currentUser?.role === 'SUPER_ADMIN' && (
+             <select 
+               className="p-3 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold outline-none"
+               value={selectedBranchForPIN}
+               onChange={e => setSelectedBranchForPIN(e.target.value)}
+             >
+               {branches.map(b => (
+                 <option key={b.id} value={b.id}>{b.name}</option>
+               ))}
+             </select>
+          )}
+          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
+            <button 
+               onClick={handleGeneratePIN}
+               disabled={isGenerating}
+               className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-2"
+            >
+               {isGenerating ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-key"></i>}
+               GENERATE PIN
+            </button>
+          )}
+          <div className="bg-white px-6 py-3 rounded-2xl border shadow-sm">
+             <p className="text-[10px] font-bold text-gray-400 uppercase">Total Period Revenue</p>
+             <p className="text-xl font-black text-green-600">{formatCurrency(totalRev)}</p>
+          </div>
         </div>
       </div>
+      
+      {generatedPIN && (
+         <div className="bg-indigo-900 p-6 rounded-[2rem] text-center text-white relative overflow-hidden animate-[slideUp_0.4s_ease-out] shadow-2xl">
+            <p className="text-indigo-300 font-bold text-xs uppercase tracking-widest mb-2">One-Time Transaction PIN</p>
+            <div className="text-5xl font-black tracking-[0.2em] font-mono text-white mb-2">{generatedPIN}</div>
+            <p className="text-indigo-400 text-[10px] font-medium">Share this code with staff to authorize a Cash/Card transaction. Valid for one use only.</p>
+            <button onClick={() => setGeneratedPIN(null)} className="absolute top-4 right-4 text-indigo-400 hover:text-white"><i className="fas fa-times"></i></button>
+         </div>
+      )}
 
       <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
         <table className="w-full text-left">

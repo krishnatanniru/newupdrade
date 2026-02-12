@@ -1,10 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../AppContext';
-import { SubscriptionStatus, PlanType, UserRole } from '../types';
+import { SubscriptionStatus, PlanType, UserRole, Shift } from '../types';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
+// Shift validation utilities
+const parseTime = (timeStr: string): number => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
+const getCurrentTimeString = (): string => {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+};
+
+const findMatchingShift = (currentTime: string, shifts: Shift[]): { shift: Shift; index: number } | null => {
+  const currentMinutes = parseTime(currentTime);
+  
+  for (let i = 0; i < shifts.length; i++) {
+    const shift = shifts[i];
+    const startMinutes = parseTime(shift.start);
+    const endMinutes = parseTime(shift.end);
+    
+    // Allow 30 minutes early check-in
+    const earlyWindow = startMinutes - 30;
+    
+    // Check if current time falls within shift (with early window)
+    if (currentMinutes >= earlyWindow && currentMinutes <= endMinutes) {
+      return { shift, index: i };
+    }
+  }
+  return null;
+};
+
+const calculateHoursWorked = (timeIn: string, timeOut: string): number => {
+  const inMinutes = parseTime(timeIn);
+  const outMinutes = parseTime(timeOut);
+  return Math.round((outMinutes - inMinutes) / 60 * 100) / 100; // Round to 2 decimals
+};
+
 const CheckIn: React.FC = () => {
-  const { users, subscriptions, plans, recordAttendance, updateAttendance, attendance, currentUser, branches, showToast } = useAppContext();
+  const { users, subscriptions, plans, recordAttendance, updateAttendance, attendance, currentUser, branches, showToast, bookings, updateBooking } = useAppContext();
   const [scanResult, setScanResult] = useState<{ success: boolean; message: string; subType?: string; isCheckOut?: boolean; isCrossBranch?: boolean } | null>(null);
   const [isGateOpen, setIsGateOpen] = useState(false);
   const [isHardwareOnline] = useState(true);
@@ -19,7 +55,7 @@ const CheckIn: React.FC = () => {
     scanner.render(onScanSuccess, onScanFailure);
 
     function onScanSuccess(decodedText: string) {
-      handleCheckIn(decodedText);
+      handleQRScan(decodedText);
       scanner.clear();
       // Re-enable after 3 seconds
       setTimeout(() => {
@@ -46,6 +82,69 @@ const CheckIn: React.FC = () => {
     }
   };
 
+  const handleQRScan = async (decodedText: string) => {
+    try {
+      // Try to parse as class completion code
+      const parsedData = JSON.parse(decodedText);
+      
+      if (parsedData.type === 'CLASS_COMPLETION' && parsedData.bookingId) {
+        // This is a class completion QR
+        await handleClassCompletion(parsedData);
+        return;
+      }
+    } catch (e) {
+      // Not a class completion QR, treat as branch check-in
+    }
+    
+    // Default: handle as branch check-in
+    handleCheckIn(decodedText);
+  };
+
+  const handleClassCompletion = async (completionData: any) => {
+    const { bookingId, trainerId, memberId, classType } = completionData;
+    
+    // Find the booking
+    const booking = bookings.find(b => b.id === bookingId);
+    if (!booking) {
+      setScanResult({
+        success: false,
+        message: "Class session not found."
+      });
+      setTimeout(() => setScanResult(null), 3000);
+      return;
+    }
+
+    if (booking.status === 'COMPLETED') {
+      setScanResult({
+        success: false,
+        message: "Class already marked as completed."
+      });
+      setTimeout(() => setScanResult(null), 3000);
+      return;
+    }
+
+    // Update booking status to COMPLETED
+    await updateBooking(bookingId, { status: 'COMPLETED' });
+    
+    // Calculate and show commission info
+    const trainer = users.find(u => u.id === trainerId);
+    const commission = trainer?.commissionPercentage || 0;
+    const classTypeLabel = classType === 'PT' ? 'PT Session' : 'Group Class';
+    
+    setScanResult({
+      success: true,
+      message: `${classTypeLabel} Completed! ${commission}% commission credited to trainer.`,
+      subType: classType
+    });
+
+    showToast(`Class completed! Commission earned: ${commission}%`, 'success');
+    
+    // Trigger gate for exit
+    setIsGateOpen(true);
+    await triggerHardwareGate(booking.branchId);
+    setTimeout(() => { setIsGateOpen(false); setScanResult(null); }, 5000);
+  };
+
   const handleCheckIn = (branchIdScanned: string) => {
     if (!currentUser) {
       showToast("Please login to scan branch QR", "error");
@@ -63,6 +162,24 @@ const CheckIn: React.FC = () => {
 
     // STAFF LOGIC (PUNCH IN / PUNCH OUT)
     if (currentUser.role !== UserRole.MEMBER) {
+      const currentTime = getCurrentTimeString();
+      const userShifts = currentUser.shifts || [];
+      
+      // Check if staff has any shifts assigned
+      if (userShifts.length === 0) {
+        setScanResult({ 
+          success: false, 
+          message: `No shifts assigned. Contact admin.`,
+          subType: currentUser.role.replace('_', ' ')
+        });
+        setTimeout(() => setScanResult(null), 3000);
+        return;
+      }
+      
+      // Find matching shift for current time
+      const matchingShift = findMatchingShift(currentTime, userShifts);
+      
+      // Check for open attendance (existing check-in without checkout)
       const openAttendance = attendance.find(a => 
         a.userId === currentUser.id && 
         a.date === today && 
@@ -70,25 +187,56 @@ const CheckIn: React.FC = () => {
       );
 
       if (openAttendance) {
-        updateAttendance(openAttendance.id, { timeOut: new Date().toLocaleTimeString() });
+        // CHECK OUT
+        const timeOut = currentTime;
+        const hoursWorked = calculateHoursWorked(openAttendance.timeIn, timeOut);
+        
+        const isEarlyOut = openAttendance.shiftEnd ? parseTime(timeOut) < parseTime(openAttendance.shiftEnd) : false;
+        
+        updateAttendance(openAttendance.id, { 
+          timeOut: timeOut,
+          hoursWorked: hoursWorked,
+          isEarlyOut: isEarlyOut
+        });
+        
         setScanResult({ 
           success: true, 
-          message: `Shift Finalized at ${branch.name}. Great work!`,
+          message: `Shift Ended: ${hoursWorked}h worked.`,
           subType: currentUser.role.replace('_', ' '),
           isCheckOut: true
         });
       } else {
+        // CHECK IN
+        if (!matchingShift) {
+          // Not within any shift time
+          const shiftTimes = userShifts.map(s => `${s.start}-${s.end}`).join(', ');
+          setScanResult({ 
+            success: false, 
+            message: `Outside shift hours. Your shifts: ${shiftTimes}`,
+            subType: currentUser.role.replace('_', ' ')
+          });
+          setTimeout(() => setScanResult(null), 5000);
+          return;
+        }
+        
+        const isLate = parseTime(currentTime) > parseTime(matchingShift.shift.start);
+        
         recordAttendance({
           id: `att-${Date.now()}`,
           userId: currentUser.id,
           date: today,
-          timeIn: new Date().toLocaleTimeString(),
+          timeIn: currentTime,
           branchId: branch.id,
-          type: 'STAFF'
+          type: 'STAFF',
+          shiftIndex: matchingShift.index,
+          shiftStart: matchingShift.shift.start,
+          shiftEnd: matchingShift.shift.end,
+          isLate: isLate
         });
+        
         setScanResult({ 
           success: true, 
-          message: `Punch-In Recorded at ${branch.name}. Shift started.`,
+          message: `Shift ${matchingShift.index + 1} Started: ${matchingShift.shift.start}-${matchingShift.shift.end}${isLate ? ' (Late)' : ''}`,
           subType: currentUser.role.replace('_', ' '),
           isCheckOut: false
         });
@@ -160,8 +308,16 @@ const CheckIn: React.FC = () => {
         </div>
 
         <div className="text-center mb-10">
-           <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter leading-none mb-2">Scan Branch QR</h2>
-           <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em]">Record your attendance instantly</p>
+           <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter leading-none mb-2">
+             {currentUser?.role === UserRole.MEMBER ? 'Scan QR Code' : 'Scan Branch QR'}
+           </h2>
+           <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.3em]">
+             {currentUser?.role === UserRole.MEMBER 
+               ? 'Scan branch QR to enter or class QR to complete' 
+               : currentUser?.role === UserRole.TRAINER
+               ? 'Scan branch QR for attendance'
+               : 'Record your attendance instantly'}
+           </p>
         </div>
 
         <div className="relative mb-10">
@@ -198,24 +354,70 @@ const CheckIn: React.FC = () => {
             <i className="fas fa-shield-halved text-blue-500"></i> Scanner Instructions
          </h3>
          <div className="space-y-6">
-            <div className="flex gap-4">
-               <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
-                  <i className="fas fa-qrcode text-xs"></i>
-               </div>
-               <div>
-                  <p className="text-[11px] font-black uppercase tracking-tight">Point at Branch QR</p>
-                  <p className="text-[10px] text-slate-400 font-medium leading-tight">Find the QR code displayed at the branch entrance and point your camera at it.</p>
-               </div>
-            </div>
-            <div className="flex gap-4">
-               <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
-                  <i className="fas fa-bolt-lightning text-xs"></i>
-               </div>
-               <div>
-                  <p className="text-[11px] font-black uppercase tracking-tight">Automatic Recording</p>
-                  <p className="text-[10px] text-slate-400 font-medium leading-tight">Once scanned, your attendance will be recorded automatically in our cloud database.</p>
-               </div>
-            </div>
+            {currentUser?.role === UserRole.MEMBER ? (
+              <>
+                <div className="flex gap-4">
+                   <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
+                      <i className="fas fa-door-open text-xs"></i>
+                   </div>
+                   <div>
+                      <p className="text-[11px] font-black uppercase tracking-tight">Branch Entry</p>
+                      <p className="text-[10px] text-slate-400 font-medium leading-tight">Scan branch QR at entrance to check in and open the gate.</p>
+                   </div>
+                </div>
+                <div className="flex gap-4">
+                   <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
+                      <i className="fas fa-check-circle text-xs"></i>
+                   </div>
+                   <div>
+                      <p className="text-[11px] font-black uppercase tracking-tight">Class Completion</p>
+                      <p className="text-[10px] text-slate-400 font-medium leading-tight">After class, scan the QR shown by your trainer to mark attendance and complete the session.</p>
+                   </div>
+                </div>
+              </>
+            ) : currentUser?.role === UserRole.TRAINER ? (
+              <>
+                <div className="flex gap-4">
+                   <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
+                      <i className="fas fa-qrcode text-xs"></i>
+                   </div>
+                   <div>
+                      <p className="text-[11px] font-black uppercase tracking-tight">Mark Attendance</p>
+                      <p className="text-[10px] text-slate-400 font-medium leading-tight">Scan branch QR to punch in/out for your shift.</p>
+                   </div>
+                </div>
+                <div className="flex gap-4">
+                   <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
+                      <i className="fas fa-calendar-check text-xs"></i>
+                   </div>
+                   <div>
+                      <p className="text-[11px] font-black uppercase tracking-tight">Complete Classes</p>
+                      <p className="text-[10px] text-slate-400 font-medium leading-tight">Use the Bookings page to generate QR codes for class completion.</p>
+                   </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex gap-4">
+                   <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
+                      <i className="fas fa-qrcode text-xs"></i>
+                   </div>
+                   <div>
+                      <p className="text-[11px] font-black uppercase tracking-tight">Point at Branch QR</p>
+                      <p className="text-[10px] text-slate-400 font-medium leading-tight">Find the QR code displayed at the branch entrance and point your camera at it.</p>
+                   </div>
+                </div>
+                <div className="flex gap-4">
+                   <div className="bg-white/10 w-10 h-10 rounded-xl flex items-center justify-center shrink-0">
+                      <i className="fas fa-bolt-lightning text-xs"></i>
+                   </div>
+                   <div>
+                      <p className="text-[11px] font-black uppercase tracking-tight">Automatic Recording</p>
+                      <p className="text-[10px] text-slate-400 font-medium leading-tight">Once scanned, your attendance will be recorded automatically in our cloud database.</p>
+                   </div>
+                </div>
+              </>
+            )}
          </div>
       </div>
 

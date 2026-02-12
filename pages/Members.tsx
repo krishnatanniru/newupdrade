@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../AppContext';
 import { UserRole, SubscriptionStatus, User } from '../types';
+import { ImageUploadModal } from '../components/ImageUploadModal';
+import { PaymentModal } from '../components/PaymentModal';
 
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -12,15 +14,20 @@ const formatCurrency = (amount: number) => {
 };
 
 const Members: React.FC = () => {
-  const { users, subscriptions, plans, currentUser, enrollMember, attendance, updateUser } = useAppContext();
+  const { users, subscriptions, plans, currentUser, enrollMember, attendance, updateUser, verifyTransactionCode, showToast } = useAppContext();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [activeModal, setActiveModal] = useState<'logs' | 'manage' | null>(null);
   const [selectedMember, setSelectedMember] = useState<User | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
   
   // Form States
-  const [enrollData, setEnrollData] = useState({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '' });
-  const [manageData, setManageData] = useState({ name: '', email: '', emergencyContact: '', address: '' });
+   const [enrollData, setEnrollData] = useState({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '', avatar: '', startDate: new Date().toISOString().split('T')[0], discount: 0, paymentMethod: 'ONLINE' as 'CASH' | 'CARD' | 'ONLINE' | 'POS', transactionCode: '' });
+   const [manageData, setManageData] = useState({ name: '', email: '', emergencyContact: '', address: '', avatar: '' });
+   const [isImageModalOpen, setImageModalOpen] = useState(false);
+   const [isEnrollImageModalOpen, setEnrollImageModalOpen] = useState(false);
+   const [isPaymentModalOpen, setPaymentModalOpen] = useState(false);
+   const [pendingEnrollment, setPendingEnrollment] = useState<any>(null);
 
   const members = users.filter(u => u.role === UserRole.MEMBER && 
     (currentUser?.role === UserRole.SUPER_ADMIN || u.branchId === currentUser?.branchId));
@@ -30,16 +37,77 @@ const Members: React.FC = () => {
     m.memberId?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddMember = (e: React.FormEvent) => {
+   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // For ONLINE payments, show Razorpay modal first
+    if (enrollData.paymentMethod === 'ONLINE') {
+      const plan = plans.find(p => p.id === enrollData.planId);
+      if (!plan) {
+        showToast('Please select a valid plan', 'error');
+        return;
+      }
+      const finalAmount = Math.max(0, plan.price - Number(enrollData.discount));
+      setPendingEnrollment({
+        userData: {
+          name: enrollData.name,
+          email: enrollData.email,
+          emergencyContact: enrollData.emergencyContact,
+          address: enrollData.address,
+          phone: enrollData.emergencyContact, // Using emergency contact as phone
+          avatar: enrollData.avatar
+        },
+        planId: enrollData.planId,
+        discount: Number(enrollData.discount),
+        amount: finalAmount,
+        planName: plan.name,
+        branchId: currentUser?.branchId // Pass the current branch for payment config
+      });
+      setPaymentModalOpen(true);
+      return;
+    }
+    
+    // For CASH/CARD payments, verify transaction code
+    if (enrollData.paymentMethod === 'CASH' || enrollData.paymentMethod === 'CARD') {
+        if (!enrollData.transactionCode) {
+           showToast('PIN Verification Required for Cash/Card', 'error');
+           return;
+        }
+        setIsVerifying(true);
+        const isValid = await verifyTransactionCode(enrollData.transactionCode);
+        setIsVerifying(false);
+
+        if (!isValid) {
+           showToast('Invalid or Expired Transaction PIN', 'error');
+           return;
+        }
+    }
+
+    // Process enrollment for non-online payments
+    completeEnrollment();
+  };
+
+  const completeEnrollment = (paymentId?: string) => {
     enrollMember({ 
       name: enrollData.name, 
       email: enrollData.email, 
       emergencyContact: enrollData.emergencyContact,
-      address: enrollData.address
-    }, enrollData.planId);
+      address: enrollData.address,
+      avatar: enrollData.avatar
+    }, enrollData.planId, undefined, undefined, Number(enrollData.discount), enrollData.paymentMethod, enrollData.startDate);
+    
+    if (paymentId) {
+      showToast(`Payment successful! ID: ${paymentId}`, 'success');
+    }
+    
     setAddModalOpen(false);
-    setEnrollData({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '' });
+    setPaymentModalOpen(false);
+    setPendingEnrollment(null);
+    setEnrollData({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '', avatar: '', startDate: new Date().toISOString().split('T')[0], discount: 0, paymentMethod: 'ONLINE', transactionCode: '' });
+  };
+
+  const handlePaymentSuccess = (paymentId: string) => {
+    completeEnrollment(paymentId);
   };
 
   const handleUpdateMember = (e: React.FormEvent) => {
@@ -62,9 +130,21 @@ const Members: React.FC = () => {
       name: member.name, 
       email: member.email, 
       emergencyContact: member.emergencyContact || '',
-      address: member.address || ''
+      address: member.address || '',
+      avatar: member.avatar || ''
     });
     setActiveModal('manage');
+  };
+
+  const handleImageUpload = (url: string) => {
+    setManageData({ ...manageData, avatar: url });
+    showToast('Profile picture updated', 'success');
+  };
+
+  const handleEnrollImageUpload = (url: string) => {
+    setEnrollData({ ...enrollData, avatar: url });
+    setImageModalOpen(false);
+    showToast('Profile picture added', 'success');
   };
 
   return (
@@ -145,12 +225,14 @@ const Members: React.FC = () => {
                 >
                   VIEW LOGS
                 </button>
-                <button 
-                  onClick={() => openManage(member)}
-                  className="py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors"
-                >
-                  MANAGE
-                </button>
+                {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
+                  <button 
+                    onClick={() => openManage(member)}
+                    className="py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors"
+                  >
+                    MANAGE
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -166,6 +248,32 @@ const Members: React.FC = () => {
                <button onClick={() => setAddModalOpen(false)}><i className="fas fa-times"></i></button>
             </div>
             <form onSubmit={handleAddMember} className="p-8 space-y-6">
+               {/* Profile Picture Upload */}
+               <div className="flex flex-col items-center space-y-3">
+                  <div 
+                    onClick={() => setEnrollImageModalOpen(true)}
+                    className="w-24 h-24 rounded-2xl bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-all overflow-hidden"
+                  >
+                    {enrollData.avatar ? (
+                      <img src={enrollData.avatar} alt="Profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="text-center">
+                        <i className="fas fa-camera text-2xl text-gray-400"></i>
+                        <p className="text-[10px] text-gray-400 mt-1">Add Photo</p>
+                      </div>
+                    )}
+                  </div>
+                  {enrollData.avatar && (
+                    <button 
+                      type="button"
+                      onClick={() => setEnrollData({...enrollData, avatar: ''})}
+                      className="text-xs text-red-500 font-bold hover:text-red-700"
+                    >
+                      Remove Photo
+                    </button>
+                  )}
+               </div>
+
                <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Full Name</label>
                   <input required type="text" className="w-full p-4 bg-gray-50 border rounded-xl font-bold" placeholder="Arjun Reddy" value={enrollData.name} onChange={e => setEnrollData({...enrollData, name: e.target.value})} />
@@ -192,6 +300,52 @@ const Members: React.FC = () => {
                   <select className="w-full p-4 bg-gray-50 border rounded-xl font-bold uppercase text-xs" value={enrollData.planId} onChange={e => setEnrollData({...enrollData, planId: e.target.value})}>
                     {plans.map(p => <option key={p.id} value={p.id}>{p.name} - {formatCurrency(p.price)}</option>)}
                   </select>
+               </div>
+
+               <div className="space-y-2">
+                  <label className="text-xs font-bold text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                    <i className="fas fa-calendar-alt"></i> Membership Start Date
+                  </label>
+                  <input 
+                    type="date" 
+                    required
+                    className="w-full p-4 bg-indigo-50 border border-indigo-100 rounded-xl font-bold" 
+                    value={enrollData.startDate} 
+                    onChange={e => setEnrollData({...enrollData, startDate: e.target.value})} 
+                  />
+                  <p className="text-[10px] text-slate-400 font-medium">Plan will start from this date</p>
+               </div>
+
+               <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Payment Method</label>
+                  <select className="w-full p-4 bg-gray-50 border rounded-xl font-bold uppercase text-xs" value={enrollData.paymentMethod} onChange={e => setEnrollData({...enrollData, paymentMethod: e.target.value as any})}>
+                     <option value="ONLINE">Online (UPI / Gateway)</option>
+                     <option value="CASH">Cash</option>
+                     <option value="CARD">Credit / Debit Card</option>
+                  </select>
+               </div>
+
+               {(enrollData.paymentMethod === 'CASH' || enrollData.paymentMethod === 'CARD') && (
+                 <div className="space-y-2">
+                    <label className="text-xs font-bold text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                      <i className="fas fa-lock"></i> Transaction Authorization Code
+                    </label>
+                    <input 
+                      type="text" 
+                      required 
+                      disabled={isVerifying}
+                      className="w-full p-4 bg-indigo-50 border border-indigo-100 rounded-xl font-mono text-center text-lg tracking-[0.3em] font-bold outline-none focus:ring-2 focus:ring-indigo-500" 
+                      placeholder="XXXXXX" 
+                      value={enrollData.transactionCode} 
+                      onChange={e => setEnrollData({...enrollData, transactionCode: e.target.value})} 
+                    />
+                    <p className="text-[10px] text-slate-400 font-medium">Ask Branch Admin to generate a one-time code.</p>
+                 </div>
+               )}
+
+               <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Discount Amount (₹)</label>
+                  <input type="number" min="0" className="w-full p-4 bg-gray-50 border rounded-xl font-bold" placeholder="0" value={enrollData.discount} onChange={e => setEnrollData({...enrollData, discount: Number(e.target.value)})} />
                </div>
                <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black uppercase tracking-widest shadow-2xl shadow-blue-100 active:scale-95 transition-all">ACTIVATE MEMBERSHIP</button>
             </form>
@@ -248,6 +402,24 @@ const Members: React.FC = () => {
                <button onClick={() => setActiveModal(null)}><i className="fas fa-times"></i></button>
             </div>
             <form onSubmit={handleUpdateMember} className="p-8 space-y-6">
+               <div className="flex flex-col items-center gap-3">
+                  <div className="relative">
+                    <img 
+                      src={manageData.avatar || 'https://i.pravatar.cc/150?u=default'} 
+                      alt="Profile" 
+                      className="w-24 h-24 rounded-2xl object-cover border-4 border-white shadow-lg"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setImageModalOpen(true)}
+                      className="absolute -bottom-2 -right-2 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <i className="fas fa-camera text-xs"></i>
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 font-medium">Click camera to change photo</p>
+               </div>
+
                <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Athlete Name</label>
                   <input required type="text" className="w-full p-4 bg-gray-50 border rounded-xl font-bold" value={manageData.name} onChange={e => setManageData({...manageData, name: e.target.value})} />
@@ -278,6 +450,39 @@ const Members: React.FC = () => {
           </div>
         </div>
       )}
+
+      <ImageUploadModal
+        isOpen={isImageModalOpen}
+        onClose={() => setImageModalOpen(false)}
+        onUpload={handleImageUpload}
+        title="Update Member Photo"
+      />
+
+      <ImageUploadModal
+        isOpen={isEnrollImageModalOpen}
+        onClose={() => setEnrollImageModalOpen(false)}
+        onUpload={handleEnrollImageUpload}
+        title="Add Athlete Photo"
+      />
+
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => {
+          setPaymentModalOpen(false);
+          setPendingEnrollment(null);
+        }}
+        amount={pendingEnrollment?.amount || 0}
+        description={`${pendingEnrollment?.planName || 'Gym Membership'} - ${enrollData.name}`}
+        customerName={enrollData.name}
+        customerEmail={enrollData.email}
+        customerPhone={enrollData.emergencyContact}
+        branchId={pendingEnrollment?.branchId}
+        onSuccess={handlePaymentSuccess}
+        onError={(error) => {
+          console.error('Payment error:', error);
+          showToast('Payment failed. Please try again.', 'error');
+        }}
+      />
 
       <style>{`
         @keyframes slideUp {

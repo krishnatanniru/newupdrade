@@ -26,7 +26,7 @@ export const BRANCHES = [
 ];
 
 export const MOCK_USERS = [
-  { id: 'u1', name: 'Arjun Sharma', email: 'owner@gym.in', role: UserRole.SUPER_ADMIN, branchId: null, avatar: 'https://i.pravatar.cc/150?u=arjun' },
+  { id: 'u1', name: 'Arjun Sharma', email: 'owner@gym.in', password: '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', role: UserRole.SUPER_ADMIN, branchId: null, avatar: 'https://i.pravatar.cc/150?u=arjun' },
   { id: 'u2', name: 'Priya Patel', email: 'priya@gym.in', role: UserRole.BRANCH_ADMIN, branchId: 'b1', avatar: 'https://i.pravatar.cc/150?u=priya' },
   { id: 'u3', name: 'Vikram Singh', email: 'vikram@gym.in', role: UserRole.TRAINER, branchId: 'b1', avatar: 'https://i.pravatar.cc/150?u=vikram', hourlyRate: 800, commissionPercentage: 20, shifts: [{start: '06:00', end: '11:00'}, {start: '17:00', end: '21:00'}] },
   { id: 'u4', name: 'Rahul Verma', email: 'rahul@gmail.com', role: UserRole.MEMBER, branchId: 'b1', memberId: 'IF-IND-1001', avatar: 'https://i.pravatar.cc/150?u=rahul' },
@@ -90,13 +90,14 @@ export const MOCK_OFFERS: Offer[] = [
 export const NAV_ITEMS = [
   { label: 'Dashboard', path: '/', icon: <i className="fas fa-chart-line"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER] },
   { label: 'Branches', path: '/branches', icon: <i className="fas fa-building"></i>, roles: [UserRole.SUPER_ADMIN] },
+  { label: 'Walk-Ins', path: '/walk-ins', icon: <i className="fas fa-walking"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER, UserRole.RECEPTIONIST] },
   { label: 'Campaigns', path: '/campaigns', icon: <i className="fas fa-bullhorn"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN] },
   { label: 'Members', path: '/members', icon: <i className="fas fa-users"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER, UserRole.RECEPTIONIST] },
   { label: 'Staff', path: '/staff', icon: <i className="fas fa-user-tie"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER] },
   { label: 'Inventory', path: '/inventory', icon: <i className="fas fa-box-open"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER, UserRole.RECEPTIONIST] },
   { label: 'Plans', path: '/plans', icon: <i className="fas fa-tags"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN] },
   { label: 'Store', path: '/store', icon: <i className="fas fa-shopping-cart"></i>, roles: [UserRole.MEMBER] },
-  { label: 'Check-In', path: '/check-in', icon: <i className="fas fa-qrcode"></i>, roles: [UserRole.BRANCH_ADMIN, UserRole.MANAGER, UserRole.RECEPTIONIST] },
+  { label: 'Check-In', path: '/check-in', icon: <i className="fas fa-qrcode"></i>, roles: [UserRole.BRANCH_ADMIN, UserRole.MANAGER, UserRole.RECEPTIONIST, UserRole.MEMBER, UserRole.STAFF, UserRole.TRAINER] },
   { label: 'Bookings', path: '/bookings', icon: <i className="fas fa-calendar-check"></i>, roles: [UserRole.BRANCH_ADMIN, UserRole.MANAGER, UserRole.TRAINER, UserRole.MEMBER] },
   { label: 'Communications', path: '/comms', icon: <i className="fas fa-paper-plane"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER] },
   { label: 'Portal', path: '/portal', icon: <i className="fas fa-user-circle"></i>, roles: [UserRole.MEMBER] },
@@ -104,4 +105,5 @@ export const NAV_ITEMS = [
   { label: 'Feedback', path: '/feedback', icon: <i className="fas fa-comment-dots"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER] },
   { label: 'Sales', path: '/sales', icon: <i className="fas fa-indian-rupee-sign"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER] },
   { label: 'Tax Center', path: '/tax', icon: <i className="fas fa-file-contract"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN] },
+  { label: 'Holidays', path: '/holidays', icon: <i className="fas fa-calendar-star"></i>, roles: [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.MANAGER] },
 ];

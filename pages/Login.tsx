@@ -1,68 +1,296 @@
-
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAppContext } from '../AppContext';
 import { UserRole } from '../types';
+import { supabase } from '../src/lib/supabase';
+
+// Rate limiting storage
+interface LoginAttempt {
+  count: number;
+  lastAttempt: number;
+}
+
+const loginAttempts: Map<string, LoginAttempt> = new Map();
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
 
 const Login: React.FC = () => {
-  const { users, setCurrentUser } = useAppContext();
+  const { users, setCurrentUser, showToast } = useAppContext();
+  const navigate = useNavigate();
+  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState(''); 
   const [error, setError] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [lockoutTime, setLockoutTime] = useState<number | null>(null);
   
   // View states: 'login' | 'forgot' | 'success'
   const [view, setView] = useState<'login' | 'forgot' | 'success'>('login');
   const [forgotEmail, setForgotEmail] = useState('');
   const [isSendingReset, setIsSendingReset] = useState(false);
 
-  // FOR DEMO PURPOSES: Universal password fallback
-  const DEMO_SECRET_KEY = 'ironflow2025';
+  // Check for existing session on mount
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      const session = localStorage.getItem('ironflow_session');
+      if (session) {
+        try {
+          const parsed = JSON.parse(session);
+          // Validate session hasn't expired
+          if (parsed.expiresAt && new Date(parsed.expiresAt) > new Date()) {
+            const user = users.find(u => u.id === parsed.userId);
+            if (user) {
+              setCurrentUser(user);
+              navigate('/dashboard');
+            }
+          } else {
+            localStorage.removeItem('ironflow_session');
+          }
+        } catch {
+          localStorage.removeItem('ironflow_session');
+        }
+      }
+    };
+    checkExistingSession();
+  }, [users, setCurrentUser, navigate]);
 
-  const handleManualLogin = (e: React.FormEvent) => {
+  // Check rate limiting
+  const checkRateLimit = useCallback((email: string): boolean => {
+    const now = Date.now();
+    const attempt = loginAttempts.get(email);
+    
+    if (attempt) {
+      // Reset if lockout period has passed
+      if (now - attempt.lastAttempt > LOCKOUT_DURATION) {
+        loginAttempts.set(email, { count: 0, lastAttempt: now });
+        return true;
+      }
+      
+      // Check if locked out
+      if (attempt.count >= MAX_ATTEMPTS) {
+        const remainingTime = Math.ceil((LOCKOUT_DURATION - (now - attempt.lastAttempt)) / 60000);
+        setLockoutTime(remainingTime);
+        return false;
+      }
+    }
+    
+    return true;
+  }, []);
+
+  // Record failed attempt
+  const recordFailedAttempt = useCallback((email: string) => {
+    const now = Date.now();
+    const attempt = loginAttempts.get(email);
+    
+    if (attempt) {
+      loginAttempts.set(email, { 
+        count: attempt.count + 1, 
+        lastAttempt: now 
+      });
+      
+      if (attempt.count + 1 >= MAX_ATTEMPTS) {
+        setLockoutTime(15);
+      }
+    } else {
+      loginAttempts.set(email, { count: 1, lastAttempt: now });
+    }
+  }, []);
+
+  // Simple hash function for password comparison
+  const hashPassword = async (password: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check rate limiting
+    if (!checkRateLimit(email.toLowerCase())) {
+      setError(`Account locked. Try again in ${lockoutTime} minutes.`);
+      return;
+    }
+    
     setIsAuthenticating(true);
     setError('');
+    setLockoutTime(null);
 
-    setTimeout(() => {
-      const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    try {
+      // First, try to login with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.toLowerCase(),
+        password: password
+      });
       
-      if (user) {
-        // Authenticate using individual password OR demo key fallback
-        const isValidPassword = (user.password && password === user.password) || (password === DEMO_SECRET_KEY);
+      // If user doesn't exist in Supabase Auth, try to create them
+      if (authError?.message?.includes('Invalid login credentials')) {
+        // Check if user exists in our database directly (not from context)
+        const { data: dbUsers, error: dbError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', email.toLowerCase())
+          .single();
         
-        if (isValidPassword) {
-          setCurrentUser(user);
-          // Redirect logic happens automatically in AppRoutes via Dashboard component
-        } else {
-          setError(`Access Denied: Invalid Security Token.`);
+        if (dbError || !dbUsers) {
+          console.log('User not found in database:', email);
+          recordFailedAttempt(email.toLowerCase());
+          setError('Invalid email or password.');
           setIsAuthenticating(false);
+          return;
         }
-      } else {
-        setError('System Error: Account not recognized.');
+        
+        const user = dbUsers;
+        
+        // Verify password against database hash
+        const hashedInputPassword = await hashPassword(password);
+        if (user.password !== hashedInputPassword) {
+          console.log('Password mismatch for user:', email);
+          recordFailedAttempt(email.toLowerCase());
+          setError('Invalid email or password.');
+          setIsAuthenticating(false);
+          return;
+        }
+        
+        // User exists in DB but not in Auth - create them in Supabase Auth
+        showToast('Setting up your account...', 'success');
+        
+        const { error: signUpError } = await supabase.auth.signUp({
+          email: email.toLowerCase(),
+          password: password,
+          options: {
+            data: {
+              name: user.name,
+              role: user.role
+            }
+          }
+        });
+        
+        if (signUpError) {
+          console.error('Auto-create user error:', signUpError);
+          // If user already exists in Auth (created in previous session), try to login
+          if (signUpError.message.includes('already registered')) {
+            const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+              email: email.toLowerCase(),
+              password: password
+            });
+            
+            if (!retryError && retryData.user) {
+              loginAttempts.delete(email.toLowerCase());
+              setCurrentUser(user);
+              showToast('Login successful', 'success');
+              navigate('/dashboard');
+              return;
+            }
+          }
+          recordFailedAttempt(email.toLowerCase());
+          setError('Invalid email or password.');
+          setIsAuthenticating(false);
+          return;
+        }
+        
+        // Now try to login again
+        const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+          email: email.toLowerCase(),
+          password: password
+        });
+        
+        if (retryError || !retryData.user) {
+          recordFailedAttempt(email.toLowerCase());
+          setError('Invalid email or password.');
+          setIsAuthenticating(false);
+          return;
+        }
+        
+        // Success! Login the user
+        loginAttempts.delete(email.toLowerCase());
+        setCurrentUser(user);
+        showToast('Login successful', 'success');
+        navigate('/dashboard');
+        return;
+      }
+      
+      if (authError) {
+        recordFailedAttempt(email.toLowerCase());
+        setError('Invalid email or password.');
+        setIsAuthenticating(false);
+        return;
+      }
+      
+      if (authData.user) {
+        // Find the user in our users table directly from database
+        const { data: dbUser, error: dbError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', email.toLowerCase())
+          .single();
+        
+        if (dbError || !dbUser) {
+          // User exists in Auth but not in our users table
+          setError('Account not found in system. Contact admin.');
+          setIsAuthenticating(false);
+          // Sign out from Supabase
+          await supabase.auth.signOut();
+          return;
+        }
+        
+        // Clear failed attempts on successful login
+        loginAttempts.delete(email.toLowerCase());
+        
+        setCurrentUser(dbUser);
+        showToast('Login successful', 'success');
+        navigate('/dashboard');
         setIsAuthenticating(false);
       }
-    }, 1500);
+    } catch (err) {
+      setError('An error occurred. Please try again.');
+      setIsAuthenticating(false);
+    }
   };
 
-  const handleForgotSubmit = (e: React.FormEvent) => {
+  const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSendingReset(true);
+    setError('');
     
-    // Simulate API delay
-    setTimeout(() => {
+    try {
+      // Check if user exists in our database
+      const user = users.find(u => u.email.toLowerCase() === forgotEmail.toLowerCase());
+      
+      if (!user) {
+        // Don't reveal if email exists
+        setTimeout(() => {
+          setIsSendingReset(false);
+          setView('success');
+        }, 1500);
+        return;
+      }
+      
+      // Try to send password reset email via Supabase Auth
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.toLowerCase(), {
+        redirectTo: 'https://speedfitness.org/reset-password'
+      });
+      
+      if (error) {
+        console.error('Password reset error:', error);
+        // If user doesn't exist in Auth, we need to create them first
+        if (error.message.includes('User not found')) {
+          setIsSendingReset(false);
+          setError('Account not set up for password reset. Please contact admin.');
+          return;
+        }
+      }
+      
+      // Always show success to prevent email enumeration
       setIsSendingReset(false);
       setView('success');
-    }, 1500);
-  };
-
-  const quickLogin = (role: UserRole) => {
-    setIsAuthenticating(true);
-    const user = users.find(u => u.role === role);
-    setTimeout(() => {
-      if (user) setCurrentUser(user);
-      setIsAuthenticating(false);
-    }, 1000);
+    } catch (err) {
+      console.error('Password reset error:', err);
+      setIsSendingReset(false);
+      setView('success');
+    }
   };
 
   return (
@@ -177,71 +405,14 @@ const Login: React.FC = () => {
                 </button>
               </form>
 
-              {/* Demo Sandbox Entry */}
-              <div className="mt-8">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="h-px bg-slate-800 flex-1"></div>
-                  <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">Quick Demo Roles</span>
-                  <div className="h-px bg-slate-800 flex-1"></div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 max-h-[220px] overflow-y-auto scrollbar-hide pr-1">
-                  <button 
-                    onClick={() => quickLogin(UserRole.SUPER_ADMIN)}
-                    disabled={isAuthenticating}
-                    className="bg-slate-800/50 border border-slate-800 p-2.5 rounded-xl text-left hover:border-blue-500 transition-all group disabled:opacity-30"
-                  >
-                    <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest mb-0.5">Owner</p>
-                    <p className="text-[11px] text-slate-300 font-bold group-hover:text-white truncate">Super Admin</p>
-                  </button>
-                  <button 
-                    onClick={() => quickLogin(UserRole.BRANCH_ADMIN)}
-                    disabled={isAuthenticating}
-                    className="bg-slate-800/50 border border-slate-800 p-2.5 rounded-xl text-left hover:border-indigo-500 transition-all group disabled:opacity-30"
-                  >
-                    <p className="text-[8px] font-black text-indigo-500 uppercase tracking-widest mb-0.5">Branch Admin</p>
-                    <p className="text-[11px] text-slate-300 font-bold group-hover:text-white truncate">Priya Patel</p>
-                  </button>
-                  <button 
-                    onClick={() => quickLogin(UserRole.MANAGER)}
-                    disabled={isAuthenticating}
-                    className="bg-slate-800/50 border border-slate-800 p-2.5 rounded-xl text-left hover:border-cyan-500 transition-all group disabled:opacity-30"
-                  >
-                    <p className="text-[8px] font-black text-cyan-500 uppercase tracking-widest mb-0.5">Manager</p>
-                    <p className="text-[11px] text-slate-300 font-bold group-hover:text-white truncate">Sanjay Dutt</p>
-                  </button>
-                  <button 
-                    onClick={() => quickLogin(UserRole.TRAINER)}
-                    disabled={isAuthenticating}
-                    className="bg-slate-800/50 border border-slate-800 p-2.5 rounded-xl text-left hover:border-violet-500 transition-all group disabled:opacity-30"
-                  >
-                    <p className="text-[8px] font-black text-violet-500 uppercase tracking-widest mb-0.5">Trainer</p>
-                    <p className="text-[11px] text-slate-300 font-bold group-hover:text-white truncate">Vikram Singh</p>
-                  </button>
-                  <button 
-                    onClick={() => quickLogin(UserRole.RECEPTIONIST)}
-                    disabled={isAuthenticating}
-                    className="bg-slate-800/50 border border-slate-800 p-2.5 rounded-xl text-left hover:border-emerald-500 transition-all group disabled:opacity-30"
-                  >
-                    <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-0.5">Front Desk</p>
-                    <p className="text-[11px] text-slate-300 font-bold group-hover:text-white truncate">Neha Kapoor</p>
-                  </button>
-                  <button 
-                    onClick={() => quickLogin(UserRole.MEMBER)}
-                    disabled={isAuthenticating}
-                    className="bg-slate-800/50 border border-slate-800 p-2.5 rounded-xl text-left hover:border-orange-500 transition-all group disabled:opacity-30"
-                  >
-                    <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest mb-0.5">Athlete</p>
-                    <p className="text-[11px] text-slate-300 font-bold group-hover:text-white truncate">Rahul Verma</p>
-                  </button>
-                  <button 
-                    onClick={() => quickLogin(UserRole.STAFF)}
-                    disabled={isAuthenticating}
-                    className="bg-slate-800/50 border border-slate-800 p-2.5 rounded-xl text-left hover:border-slate-500 transition-all group disabled:opacity-30"
-                  >
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-0.5">General Staff</p>
-                    <p className="text-[11px] text-slate-300 font-bold group-hover:text-white truncate">Karan Mehra</p>
-                  </button>
+              {/* Security Notice */}
+              <div className="mt-8 p-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl">
+                <div className="flex items-start gap-3">
+                  <i className="fas fa-shield-alt text-emerald-500 mt-0.5"></i>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Secure Connection</p>
+                    <p className="text-[11px] text-slate-500">Your session is encrypted and will expire after 8 hours of inactivity.</p>
+                  </div>
                 </div>
               </div>
             </div>

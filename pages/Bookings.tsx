@@ -1,16 +1,42 @@
-import React, { useState, useMemo } from 'react';
+
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../AppContext';
-import { UserRole, PlanType, SubscriptionStatus, Booking, User } from '../types';
+import { UserRole, PlanType, SubscriptionStatus, Booking, ClassSession } from '../types';
+import { ClassCompletionQR } from '../components/ClassCompletionQR';
 
 const Bookings: React.FC = () => {
-  const { currentUser, bookings, users, plans, subscriptions, addBooking, showToast, branches } = useAppContext();
-  const [isModalOpen, setModalOpen] = useState(false);
+  const { currentUser, bookings, users, plans, subscriptions, addBooking, showToast, branches, classSchedules, addClassTemplate, deleteClassSession } = useAppContext();
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [isScheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [bookingType, setBookingType] = useState<PlanType.PT | PlanType.GROUP>(PlanType.PT);
-  const [formData, setFormData] = useState({
-    trainerId: '',
-    date: new Date().toISOString().split('T')[0],
-    timeSlot: ''
+  const [activeTab, setActiveTab] = useState<'GROUP' | 'PT'>('GROUP');
+  const [selectedTrainer, setSelectedTrainer] = useState<string>('');
+  const [isPTBookingModalOpen, setPTBookingModalOpen] = useState(false);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [isCompletionQROpen, setIsCompletionQROpen] = useState(false);
+  
+  // Date Strip Logic
+  const dates = useMemo(() => {
+     const list = [];
+     const today = new Date();
+     for (let i = 0; i < 7; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() + i);
+        list.push({
+           full: d.toISOString().split('T')[0],
+           day: d.toLocaleDateString('en-US', { weekday: 'short' }),
+           date: d.getDate()
+        });
+     }
+     return list;
+  }, []);
+
+  const [classFormData, setClassFormData] = useState({
+    trainerId: currentUser?.id || '',
+    dayOfWeek: 'MONDAY',
+    timeSlot: '07:00 AM',
+    title: '',
+    capacity: 20
   });
 
   const allTimeSlots = [
@@ -19,422 +45,521 @@ const Bookings: React.FC = () => {
     "06:00 PM", "07:00 PM", "08:00 PM", "09:00 PM"
   ];
 
-  const time12hToMinutes = (time12h: string): number => {
-    const [time, modifier] = time12h.split(' ');
-    let [hours, minutes] = time.split(':').map(Number);
-    if (hours === 12) hours = 0;
-    if (modifier === 'PM') hours += 12;
-    return hours * 60 + minutes;
-  };
-
-  const time24hToMinutes = (time24h: string): number => {
-    const [hours, minutes] = time24h.split(':').map(Number);
-    return hours * 60 + minutes;
-  };
-
   const trainers = useMemo(() => users.filter(u => 
     u.role === UserRole.TRAINER && 
     (currentUser?.role === UserRole.SUPER_ADMIN || u.branchId === currentUser?.branchId)
   ), [users, currentUser]);
 
-  const selectedTrainer = useMemo(() => 
-    trainers.find(t => t.id === formData.trainerId), 
-  [trainers, formData.trainerId]);
+  const filteredClasses = useMemo(() => {
+     return classSchedules
+       .filter(s => s.date === selectedDate)
+       .sort((a, b) => {
+          const timeA = new Date(`2000-01-01 ${a.timeSlot}`).getTime();
+          const timeB = new Date(`2000-01-01 ${b.timeSlot}`).getTime();
+          return timeA - timeB;
+       });
+  }, [classSchedules, selectedDate]);
 
-  const activeSubForCapacity = useMemo(() => {
-    if (currentUser?.role !== UserRole.MEMBER) return null;
-    return subscriptions.find(s => {
-      const p = plans.find(plan => plan.id === s.planId);
-      return s.memberId === currentUser.id && s.status === SubscriptionStatus.ACTIVE && p?.type === bookingType;
-    });
-  }, [subscriptions, plans, currentUser, bookingType]);
-
-  const currentPlanForBooking = useMemo(() => {
-    if (!activeSubForCapacity) return null;
-    return plans.find(p => p.id === activeSubForCapacity.planId);
-  }, [activeSubForCapacity, plans]);
-
-  const availableSlotsData = useMemo(() => {
-    if (!selectedTrainer || !selectedTrainer.shifts || selectedTrainer.shifts.length === 0) {
-      return [];
-    }
-
-    const shiftSlots = allTimeSlots.filter(slot => {
-      const slotMinutes = time12hToMinutes(slot);
-      return selectedTrainer.shifts?.some(shift => {
-        const startMin = time24hToMinutes(shift.start);
-        const endMin = time24hToMinutes(shift.end);
-        return slotMinutes >= startMin && slotMinutes < endMin;
-      });
-    });
-
-    return shiftSlots.map(slot => {
-      const existingTrainerBookings = bookings.filter(b => 
-        b.trainerId === selectedTrainer.id && 
-        b.date === formData.date && 
-        b.timeSlot === slot &&
-        b.status !== 'CANCELLED'
-      );
-
-      const hasPT = existingTrainerBookings.some(b => b.type === PlanType.PT);
-      const hasGroup = existingTrainerBookings.some(b => b.type === PlanType.GROUP);
-      
-      if (hasPT) return { slot, available: false, reason: 'PRIVATE SESSION' };
-      if (bookingType === PlanType.PT && hasGroup) return { slot, available: false, reason: 'GROUP CLASS' };
-
-      const memberAlreadyInSlot = existingTrainerBookings.some(b => b.memberId === currentUser?.id);
-      if (memberAlreadyInSlot) return { slot, available: false, reason: 'ALREADY JOINED' };
-
-      if (bookingType === PlanType.GROUP) {
-          const capacity = currentPlanForBooking?.groupCapacity || 15;
-          const currentCount = existingTrainerBookings.filter(b => b.type === PlanType.GROUP).length;
-          if (currentCount >= capacity) {
-             return { slot, available: false, reason: 'CLASS FULL', count: currentCount, capacity };
-          }
-          return { slot, available: true, count: currentCount, capacity };
-      }
-      return { slot, available: true };
-    });
-  }, [selectedTrainer, allTimeSlots, bookings, formData.date, bookingType, currentUser, currentPlanForBooking]);
-
-  const filteredBookings = bookings.filter(b => {
-    if (currentUser?.role === UserRole.SUPER_ADMIN) return true;
-    if (currentUser?.role === UserRole.TRAINER) return b.trainerId === currentUser.id;
-    if (currentUser?.role === UserRole.MEMBER) return b.memberId === currentUser.id;
-    return b.branchId === currentUser?.branchId;
-  });
-
-  const handleBooking = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleBooking = async (session: ClassSession) => {
     if (!currentUser || isSubmitting) return;
-    if (!formData.timeSlot) {
-      showToast("Please select a valid time slot.", "error");
-      return;
-    }
 
-    setIsSubmitting(true);
+    const bookedCount = bookings.filter(b => 
+       b.trainerId === session.trainerId && 
+       b.date === session.date && 
+       b.timeSlot === session.timeSlot &&
+       b.status !== 'CANCELLED'
+    ).length;
 
-    // Simulated API Delay for transaction integrity
-    await new Promise(r => setTimeout(r, 600));
-
-    // Final Race Condition Check
-    const finalCollisionCheck = bookings.some(b => 
-        b.trainerId === formData.trainerId && 
-        b.date === formData.date && 
-        b.timeSlot === formData.timeSlot &&
-        b.status !== 'CANCELLED' &&
-        (b.type === PlanType.PT || (bookingType === PlanType.PT && b.type === PlanType.GROUP))
-    );
-
-    if (finalCollisionCheck) {
-       showToast("Collision detected: Slot was reserved by another member. Please refresh.", "error");
-       setIsSubmitting(false);
+    if (bookedCount >= session.capacity) {
+       showToast("Class Full! Please choose another slot.", "error");
        return;
     }
 
-    if (bookingType === PlanType.GROUP) {
-        const capacity = currentPlanForBooking?.groupCapacity || 15;
-        const currentCount = bookings.filter(b => 
-            b.trainerId === formData.trainerId && 
-            b.date === formData.date && 
-            b.timeSlot === formData.timeSlot &&
-            b.type === PlanType.GROUP &&
-            b.status !== 'CANCELLED'
-        ).length;
+    const isJoined = bookings.some(b => 
+       b.memberId === currentUser.id && 
+       b.trainerId === session.trainerId && 
+       b.date === session.date && 
+       b.timeSlot === session.timeSlot &&
+       b.status !== 'CANCELLED'
+    );
 
-        if (currentCount >= capacity) {
-            showToast("Capacity Error: This class just reached its limit.", "error");
-            setIsSubmitting(false);
-            return;
-        }
+    if (isJoined) {
+       showToast("You have already booked this class.", "error");
+       return;
     }
 
-    const activeSub = subscriptions.find(s => {
-      const plan = plans.find(p => p.id === s.planId);
-      return s.memberId === currentUser.id && s.status === SubscriptionStatus.ACTIVE && plan?.type === bookingType;
-    });
+    // Check Plan Validity
+    const activeSub = subscriptions.find(s => 
+       s.memberId === currentUser.id && 
+       s.status === SubscriptionStatus.ACTIVE &&
+       plans.find(p => p.id === s.planId)?.type === PlanType.GROUP
+    );
 
-    if (!activeSub && currentUser.role === UserRole.MEMBER) {
-      showToast(`Credential Error: You need an active ${bookingType.replace('_', ' ')} subscription.`, "error");
-      setIsSubmitting(false);
-      return;
+    if (!activeSub) {
+       showToast("You need an active Group Class subscription.", "error");
+       return;
     }
 
-    if (activeSub) {
-      const plan = plans.find(p => p.id === activeSub.planId);
-      if (plan?.maxSessions) {
-        const usedCount = bookings.filter(b => 
-          b.memberId === currentUser.id && 
-          b.type === bookingType && 
-          b.status !== 'CANCELLED' &&
-          b.date >= activeSub.startDate &&
-          b.date <= activeSub.endDate
-        ).length;
-
-        if (usedCount >= plan.maxSessions) {
-          showToast(`Quota Exhausted: You have used all ${plan.maxSessions} sessions for this period.`, "error");
-          setIsSubmitting(false);
-          return;
-        }
-      }
-    }
+    setIsSubmitting(true);
+    await new Promise(r => setTimeout(r, 600));
 
     const newBooking: Booking = {
       id: `book-${Date.now()}`,
       memberId: currentUser.id,
-      trainerId: formData.trainerId || undefined,
-      type: bookingType,
-      date: formData.date,
-      timeSlot: formData.timeSlot,
+      trainerId: session.trainerId,
+      type: PlanType.GROUP,
+      date: session.date,
+      timeSlot: session.timeSlot,
+      branchId: session.branchId,
+      status: 'BOOKED'
+    };
+
+    addBooking(newBooking);
+    setIsSubmitting(false);
+    showToast("Class Booked Successfully!", "success");
+  };
+
+  const handleScheduleTemplate = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!classFormData.trainerId || !classFormData.timeSlot || !classFormData.title) return;
+    
+    const newTemplate = {
+       id: `temp-${Date.now()}`,
+       trainerId: classFormData.trainerId,
+       dayOfWeek: classFormData.dayOfWeek,
+       timeSlot: classFormData.timeSlot,
+       title: classFormData.title,
+       capacity: classFormData.capacity,
+       branchId: currentUser?.branchId || branches[0].id
+    };
+    addClassTemplate(newTemplate);
+    setScheduleModalOpen(false);
+  };
+
+  // PT Booking Functions
+  const getTrainerPTBookings = (trainerId: string, date: string) => {
+    return bookings.filter(b => 
+      b.trainerId === trainerId && 
+      b.date === date && 
+      b.type === PlanType.PT &&
+      b.status !== 'CANCELLED'
+    );
+  };
+
+  const isTimeSlotAvailable = (trainerId: string, date: string, timeSlot: string) => {
+    const trainerBookings = getTrainerPTBookings(trainerId, date);
+    return !trainerBookings.some(b => b.timeSlot === timeSlot);
+  };
+
+  const handlePTBooking = async () => {
+    if (!currentUser || !selectedTrainer || !selectedTimeSlot || isSubmitting) return;
+
+    // Check if user has active PT subscription
+    const activePTSub = subscriptions.find(s => {
+      const plan = plans.find(p => p.id === s.planId);
+      return s.memberId === currentUser.id && 
+             s.status === SubscriptionStatus.ACTIVE &&
+             plan?.type === PlanType.PT;
+    });
+
+    if (!activePTSub) {
+      showToast("You need an active Personal Training subscription.", "error");
+      return;
+    }
+
+    // Check if sessions remaining
+    const plan = plans.find(p => p.id === activePTSub.planId);
+    const usedSessions = bookings.filter(b => 
+      b.memberId === currentUser.id && 
+      b.type === PlanType.PT &&
+      b.status !== 'CANCELLED'
+    ).length;
+
+    if (plan?.maxSessions && usedSessions >= plan.maxSessions) {
+      showToast("You have used all your PT sessions. Please upgrade your plan.", "error");
+      return;
+    }
+
+    setIsSubmitting(true);
+    await new Promise(r => setTimeout(r, 600));
+
+    const newBooking: Booking = {
+      id: `book-${Date.now()}`,
+      memberId: currentUser.id,
+      trainerId: selectedTrainer,
+      type: PlanType.PT,
+      date: selectedDate,
+      timeSlot: selectedTimeSlot,
       branchId: currentUser.branchId || branches[0].id,
       status: 'BOOKED'
     };
 
     addBooking(newBooking);
-    // Fix: Using setModalOpen instead of the non-existent setIsModalOpen
-    setModalOpen(false);
     setIsSubmitting(false);
-    showToast("Transaction Confirmed: Session Slot Secured.", "success");
-    setFormData({ trainerId: '', date: new Date().toISOString().split('T')[0], timeSlot: '' });
+    setPTBookingModalOpen(false);
+    setSelectedTimeSlot('');
+    showToast(`PT Session Booked with ${users.find(u => u.id === selectedTrainer)?.name}!`, "success");
   };
 
-  const format24to12 = (time24: string) => {
-    const [h, m] = time24.split(':');
-    const hrs = parseInt(h);
-    return `${hrs % 12 || 12}:${m} ${hrs >= 12 ? 'PM' : 'AM'}`;
+  const getAvailableTrainers = () => {
+    return trainers.filter(trainer => {
+      // Check if trainer has any availability on selected date
+      return allTimeSlots.some(slot => 
+        isTimeSlotAvailable(trainer.id, selectedDate, slot)
+      );
+    });
   };
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Class & Session Manager</h2>
-          <p className="text-gray-500 font-medium text-sm">Real-time concurrency monitoring active</p>
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight uppercase">
+            {activeTab === 'GROUP' ? 'Class Schedule' : 'Personal Training'}
+          </h2>
+          <p className="text-gray-500 font-medium text-sm">
+            {activeTab === 'GROUP' ? 'Book your next workout' : 'Book 1-on-1 sessions with trainers'}
+          </p>
         </div>
-        {currentUser?.role === UserRole.MEMBER && (
-          <button 
-            onClick={() => setModalOpen(true)}
-            className="bg-slate-900 text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all flex items-center gap-2 shadow-lg shadow-slate-100"
-          >
-            <i className="fas fa-calendar-plus"></i> BOOK SESSION
-          </button>
-        )}
+        <div className="flex gap-2">
+          {/* Tab Switcher */}
+          <div className="bg-white p-1 rounded-xl border flex">
+            <button
+              onClick={() => setActiveTab('GROUP')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                activeTab === 'GROUP' ? 'bg-slate-900 text-white' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <i className="fas fa-users mr-1"></i> Group
+            </button>
+            <button
+              onClick={() => setActiveTab('PT')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                activeTab === 'PT' ? 'bg-slate-900 text-white' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <i className="fas fa-user mr-1"></i> PT
+            </button>
+          </div>
+          
+          {/* QR Code Button for Trainers */}
+          {currentUser?.role === UserRole.TRAINER && (
+            <button 
+              onClick={() => setIsCompletionQROpen(true)}
+              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-green-700 transition-all flex items-center gap-2 shadow-lg shadow-green-100"
+            >
+              <i className="fas fa-qrcode"></i> Complete Class
+            </button>
+          )}
+          
+          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.TRAINER) && activeTab === 'GROUP' && (
+            <button 
+              onClick={() => setScheduleModalOpen(true)}
+              className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-lg shadow-indigo-100"
+            >
+              <i className="fas fa-plus-circle"></i> MANAGE
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 border-b">
-              <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                <th className="px-6 py-5">Scheduled Period</th>
-                <th className="px-6 py-5">Type</th>
-                {currentUser?.role !== UserRole.MEMBER && <th className="px-6 py-5">Athlete</th>}
-                <th className="px-6 py-5">Assigned Coach</th>
-                <th className="px-6 py-5">Status</th>
-                <th className="px-6 py-5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredBookings.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-xs">
-                     <i className="fas fa-calendar-xmark text-4xl block mb-4 opacity-10"></i>
-                     No scheduled training found.
-                  </td>
-                </tr>
-              ) : (
-                [...filteredBookings].reverse().map(book => {
-                  const member = users.find(u => u.id === book.memberId);
-                  const trainer = users.find(u => u.id === book.trainerId);
+      {/* Date Strip */}
+      <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
+         {dates.map((d, idx) => (
+            <button 
+               key={idx}
+               onClick={() => { setSelectedDate(d.full); setSelectedTrainer(''); }}
+               className={`min-w-[70px] flex flex-col items-center justify-center p-3 rounded-2xl border-2 transition-all ${
+                  selectedDate === d.full 
+                  ? 'bg-slate-900 border-slate-900 text-white shadow-xl scale-105' 
+                  : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'
+               }`}
+            >
+               <span className="text-[10px] font-black uppercase tracking-widest">{d.day}</span>
+               <span className="text-xl font-black">{d.date}</span>
+            </button>
+         ))}
+      </div>
+
+      {/* PT Booking Section */}
+      {activeTab === 'PT' && (
+        <div className="space-y-4">
+          {/* Trainer Selection */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-100">
+            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">Select Trainer</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {getAvailableTrainers().map(trainer => {
+                const isSelected = selectedTrainer === trainer.id;
+                const availableSlots = allTimeSlots.filter(slot => 
+                  isTimeSlotAvailable(trainer.id, selectedDate, slot)
+                ).length;
+                
+                return (
+                  <button
+                    key={trainer.id}
+                    onClick={() => { setSelectedTrainer(trainer.id); setSelectedTimeSlot(''); }}
+                    className={`p-4 rounded-2xl border-2 transition-all text-left ${
+                      isSelected 
+                        ? 'border-indigo-600 bg-indigo-50' 
+                        : 'border-slate-100 hover:border-slate-200'
+                    }`}
+                  >
+                    <img src={trainer.avatar} alt="" className="w-12 h-12 rounded-full mb-2 border-2 border-white shadow" />
+                    <p className="font-bold text-sm text-slate-900">{trainer.name}</p>
+                    <p className="text-xs text-slate-500">{availableSlots} slots available</p>
+                  </button>
+                );
+              })}
+            </div>
+            {getAvailableTrainers().length === 0 && (
+              <div className="text-center py-8 text-slate-400">
+                <i className="fas fa-calendar-times text-3xl mb-2"></i>
+                <p>No trainers available on this date</p>
+              </div>
+            )}
+          </div>
+
+          {/* Time Slot Selection */}
+          {selectedTrainer && (
+            <div className="bg-white p-6 rounded-2xl border border-slate-100">
+              <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">
+                Available Slots - {users.find(u => u.id === selectedTrainer)?.name}
+              </h3>
+              <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {allTimeSlots.map(slot => {
+                  const isAvailable = isTimeSlotAvailable(selectedTrainer, selectedDate, slot);
+                  const isSelected = selectedTimeSlot === slot;
+                  
                   return (
-                    <tr key={book.id} className="hover:bg-slate-50 transition-colors group">
-                      <td className="px-6 py-5">
-                        <div className="font-black text-slate-900 uppercase text-xs">{book.date}</div>
-                        <div className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">{book.timeSlot}</div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <span className={`text-[9px] font-black px-3 py-1 rounded-lg uppercase tracking-widest ${book.type === PlanType.PT ? 'bg-indigo-50 text-indigo-600' : 'bg-orange-50 text-orange-600'}`}>
-                          {book.type === PlanType.PT ? 'Personal' : 'Group'}
-                        </span>
-                      </td>
-                      {currentUser?.role !== UserRole.MEMBER && (
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-2">
-                             <img src={member?.avatar} className="w-8 h-8 rounded-lg border shadow-sm" alt="" />
-                             <span className="font-bold text-sm text-slate-700">{member?.name}</span>
-                          </div>
-                        </td>
-                      )}
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-2">
-                          <img src={trainer?.avatar || 'https://i.pravatar.cc/150?u=coach'} className="w-8 h-8 rounded-lg border shadow-sm" alt="" />
-                          <span className="text-xs text-slate-600 font-bold uppercase">{trainer?.name || (book.type === PlanType.GROUP ? 'Branch Coach' : 'Unassigned')}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                          book.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
-                          book.status === 'CANCELLED' ? 'bg-red-100 text-red-700' :
-                          'bg-blue-600 text-white shadow-lg shadow-blue-100'
-                        }`}>
-                          {book.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-5 text-right">
-                        <button className="text-slate-300 hover:text-slate-900 transition-colors">
-                          <i className="fas fa-ellipsis-h"></i>
-                        </button>
-                      </td>
-                    </tr>
+                    <button
+                      key={slot}
+                      disabled={!isAvailable}
+                      onClick={() => setSelectedTimeSlot(slot)}
+                      className={`py-3 px-2 rounded-xl text-xs font-bold transition-all ${
+                        isSelected 
+                          ? 'bg-indigo-600 text-white shadow-lg' 
+                          : isAvailable 
+                            ? 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
+                            : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {slot}
+                    </button>
                   );
-                })
+                })}
+              </div>
+              
+              {/* Book Button */}
+              {currentUser?.role === UserRole.MEMBER && selectedTimeSlot && (
+                <button
+                  onClick={handlePTBooking}
+                  disabled={isSubmitting}
+                  className="w-full mt-6 py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+                >
+                  {isSubmitting ? (
+                    <><i className="fas fa-spinner fa-spin mr-2"></i> Booking...</>
+                  ) : (
+                    <><i className="fas fa-check mr-2"></i> Book PT Session</>
+                  )}
+                </button>
               )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </div>
+          )}
 
-      {isModalOpen && (
+          {/* My PT Bookings */}
+          {currentUser?.role === UserRole.MEMBER && (
+            <div className="bg-white p-6 rounded-2xl border border-slate-100">
+              <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">My PT Sessions</h3>
+              {bookings.filter(b => 
+                b.memberId === currentUser.id && 
+                b.type === PlanType.PT &&
+                b.status !== 'CANCELLED'
+              ).length === 0 ? (
+                <p className="text-slate-400 text-sm">No PT sessions booked yet</p>
+              ) : (
+                <div className="space-y-3">
+                  {bookings.filter(b => 
+                    b.memberId === currentUser.id && 
+                    b.type === PlanType.PT &&
+                    b.status !== 'CANCELLED'
+                  ).map(booking => {
+                    const trainer = users.find(u => u.id === booking.trainerId);
+                    return (
+                      <div key={booking.id} className="flex items-center justify-between p-4 bg-indigo-50 rounded-xl">
+                        <div className="flex items-center gap-3">
+                          <img src={trainer?.avatar} alt="" className="w-10 h-10 rounded-full border-2 border-white" />
+                          <div>
+                            <p className="font-bold text-slate-900">{trainer?.name}</p>
+                            <p className="text-xs text-slate-500">{booking.date} • {booking.timeSlot}</p>
+                          </div>
+                        </div>
+                        <span className="px-3 py-1 bg-indigo-600 text-white text-xs font-bold rounded-full">
+                          {booking.status}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Group Classes Section */}
+      {activeTab === 'GROUP' && (<>
+
+      {/* Class Cards */}
+      </>)}
+      
+      {activeTab === 'GROUP' && (<div className="space-y-4">
+         {filteredClasses.length === 0 ? (
+            <div className="text-center py-20 bg-white rounded-[2rem] border border-dashed border-slate-200">
+               <i className="fas fa-mug-hot text-4xl text-slate-200 mb-4"></i>
+               <p className="text-slate-400 font-black uppercase tracking-widest text-xs">No classes scheduled for today.</p>
+            </div>
+         ) : (
+            filteredClasses.map(session => {
+               const trainer = users.find(u => u.id === session.trainerId);
+               const bookedCount = bookings.filter(b => 
+                  b.trainerId === session.trainerId && 
+                  b.date === session.date && 
+                  b.timeSlot === session.timeSlot &&
+                  b.status !== 'CANCELLED'
+               ).length;
+               const isFull = bookedCount >= session.capacity;
+               const isJoined = bookings.some(b => 
+                  b.memberId === currentUser?.id && 
+                  b.trainerId === session.trainerId && 
+                  b.date === session.date && 
+                  b.timeSlot === session.timeSlot &&
+                  b.status !== 'CANCELLED'
+               );
+
+               return (
+                  <div key={session.id} className="bg-white p-0 rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col md:flex-row hover:shadow-lg transition-all group">
+                     {/* Time Column */}
+                     <div className="bg-slate-50 p-6 flex flex-col justify-center items-center md:w-32 border-b md:border-b-0 md:border-r border-slate-100">
+                        <span className="text-lg font-black text-slate-900">{session.timeSlot.split(' ')[0]}</span>
+                        <span className="text-xs font-bold text-slate-400 uppercase">{session.timeSlot.split(' ')[1]}</span>
+                     </div>
+                     
+                     {/* Details */}
+                     <div className="p-6 flex-1 flex flex-col justify-center">
+                        <div className="flex justify-between items-start mb-2">
+                           <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight">{session.title}</h4>
+                           {isFull && <span className="bg-red-100 text-red-600 text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest">FULL</span>}
+                        </div>
+                        <div className="flex items-center gap-3">
+                           <img src={trainer?.avatar || 'https://i.pravatar.cc/150?u=coach'} className="w-6 h-6 rounded-full border border-slate-100" alt="" />
+                           <span className="text-xs font-bold text-slate-500 uppercase">{trainer?.name}</span>
+                           <span className="text-slate-300">•</span>
+                           <span className="text-xs font-bold text-slate-500 uppercase">{session.capacity - bookedCount} Slots Left</span>
+                        </div>
+                     </div>
+
+                     {/* Action Button */}
+                     <div className="p-6 flex items-center justify-center md:w-48 bg-white border-t md:border-t-0 md:border-l border-slate-50">
+                        {currentUser?.role === UserRole.MEMBER ? (
+                           <button 
+                              onClick={() => handleBooking(session)}
+                              disabled={isFull || isJoined || isSubmitting}
+                              className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${
+                                 isJoined ? 'bg-green-500 text-white cursor-default' : 
+                                 isFull ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 
+                                 'bg-slate-900 text-white hover:bg-black shadow-lg hover:shadow-xl active:scale-95'
+                              }`}
+                           >
+                              {isJoined ? 'BOOKED' : isFull ? 'WAITLIST' : 'BOOK'}
+                           </button>
+                        ) : (
+                           <button 
+                              onClick={() => deleteClassSession(session.id)}
+                              className="w-full py-3 bg-red-50 text-red-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all"
+                           >
+                              CANCEL
+                           </button>
+                        )}
+                     </div>
+                  </div>
+               );
+            })
+         )}
+      </div>)}
+
+      {isScheduleModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-[slideUp_0.3s_ease-out]">
-            <div className="bg-slate-900 p-8 text-white flex justify-between items-center">
+            <div className="bg-indigo-600 p-8 text-white flex justify-between items-center">
               <div>
-                <h3 className="text-xl font-black uppercase tracking-tight leading-none mb-1">Secure Session</h3>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Validated Cloud Availability</p>
+                <h3 className="text-xl font-black uppercase tracking-tight leading-none mb-1">Schedule Class</h3>
+                <p className="text-[10px] text-indigo-200 font-bold uppercase tracking-widest">Admin Control Panel</p>
               </div>
-              <button onClick={() => setModalOpen(false)} className="bg-white/10 p-2.5 rounded-xl hover:bg-white/20 transition-colors">
+              <button onClick={() => setScheduleModalOpen(false)} className="bg-white/10 p-2.5 rounded-xl hover:bg-white/20 transition-colors">
                 <i className="fas fa-times"></i>
               </button>
             </div>
-            <form onSubmit={handleBooking} className="p-8 space-y-6">
-              <div className="flex bg-slate-100 p-1.5 rounded-[1.5rem]">
-                 <button 
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => { setBookingType(PlanType.PT); setFormData({...formData, trainerId: '', timeSlot: ''}) }}
-                  className={`flex-1 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${bookingType === PlanType.PT ? 'bg-white text-indigo-600 shadow-xl' : 'text-slate-400'}`}
-                 >PERSONAL (1-ON-1)</button>
-                 <button 
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => { setBookingType(PlanType.GROUP); setFormData({...formData, trainerId: '', timeSlot: ''}) }}
-                  className={`flex-1 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${bookingType === PlanType.GROUP ? 'bg-white text-orange-600 shadow-xl' : 'text-slate-400'}`}
-                 >GROUP CLASS</button>
-              </div>
+            <form onSubmit={handleScheduleTemplate} className="p-8 space-y-6">
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Class Title</label>
+                  <input required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm" placeholder="e.g. Morning Yoga" value={classFormData.title} onChange={e => setClassFormData({ ...classFormData, title: e.target.value })} />
+               </div>
 
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Assigned Coach / Instructor</label>
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Instructor</label>
                   <select 
                     required
-                    disabled={isSubmitting}
-                    className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-black text-xs uppercase"
-                    value={formData.trainerId}
-                    onChange={e => setFormData({...formData, trainerId: e.target.value, timeSlot: ''})}
+                    className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-black text-xs uppercase"
+                    value={classFormData.trainerId}
+                    onChange={e => setClassFormData({ ...classFormData, trainerId: e.target.value })}
                   >
-                    <option value="">{bookingType === PlanType.PT ? 'Select your personal coach...' : 'Select class instructor...'}</option>
+                    <option value="">Select Instructor...</option>
                     {trainers.map(t => (
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
-                </div>
+               </div>
 
-                {selectedTrainer && (
-                  <div className="p-5 bg-blue-50/50 rounded-2xl border border-blue-100/50 animate-[fadeIn_0.3s_ease-out]">
-                    <div className="flex justify-between items-start mb-3">
-                       <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-2">
-                          <i className="fas fa-clock"></i> Duty Shifts
-                       </p>
-                       <span className="text-[8px] font-black bg-white px-2 py-0.5 rounded uppercase text-blue-400 border border-blue-100">Verified</span>
-                    </div>
-                    <div className="space-y-1.5">
-                      {selectedTrainer.shifts && selectedTrainer.shifts.length > 0 ? (
-                        selectedTrainer.shifts.map((s, idx) => (
-                          <p key={idx} className="text-[10px] font-black text-slate-600 uppercase">
-                             Block {idx + 1}: {format24to12(s.start)} - {format24to12(s.end)}
-                          </p>
-                        ))
-                      ) : (
-                        <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest">No duty shifts configured.</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-                
-                <div className="grid grid-cols-2 gap-4">
+               <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Reservation Date</label>
-                    <input 
-                      type="date"
-                      required
-                      disabled={isSubmitting}
-                      min={new Date().toISOString().split('T')[0]}
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-black text-xs"
-                      value={formData.date}
-                      onChange={e => setFormData({...formData, date: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center justify-between">
-                       <span>Time Block</span>
-                       {availableSlotsData.some(s => s.available) && <span className="text-[8px] text-green-500 font-black">OPEN</span>}
-                    </label>
-                    <select 
-                      required
-                      disabled={!formData.trainerId || availableSlotsData.length === 0 || isSubmitting}
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-black text-xs disabled:opacity-50"
-                      value={formData.timeSlot}
-                      onChange={e => setFormData({...formData, timeSlot: e.target.value})}
-                    >
-                      <option value="">{formData.trainerId ? (availableSlotsData.length > 0 ? 'Select slot...' : 'None Available') : 'Choose Coach'}</option>
-                      {availableSlotsData.map(slotInfo => (
-                        <option 
-                            key={slotInfo.slot} 
-                            value={slotInfo.slot} 
-                            disabled={!slotInfo.available}
-                            className={!slotInfo.available ? 'text-slate-300 line-through' : ''}
-                        >
-                          {slotInfo.slot} {slotInfo.count !== undefined ? `(${slotInfo.count}/${slotInfo.capacity})` : ''} {!slotInfo.available ? `— [${slotInfo.reason}]` : ''}
-                        </option>
-                      ))}
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Day of Week</label>
+                    <select required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-black text-xs uppercase" value={classFormData.dayOfWeek} onChange={e => setClassFormData({ ...classFormData, dayOfWeek: e.target.value })}>
+                       {['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'].map(day => (
+                         <option key={day} value={day}>{day}</option>
+                       ))}
                     </select>
                   </div>
-                </div>
-              </div>
-
-              {currentPlanForBooking && (
-                <div className="p-5 bg-indigo-50 rounded-2xl border border-indigo-100 text-[10px] text-indigo-600 font-black uppercase tracking-[0.1em] flex items-center justify-between">
-                  <div className="flex flex-col">
-                     <span className="opacity-50 text-[8px]">Linked Contract</span>
-                     <span>{currentPlanForBooking.name}</span>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Time Slot</label>
+                    <select required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-black text-xs" value={classFormData.timeSlot} onChange={e => setClassFormData({ ...classFormData, timeSlot: e.target.value })}>
+                       <option value="">Select Time...</option>
+                       {allTimeSlots.map(slot => <option key={slot} value={slot}>{slot}</option>)}
+                    </select>
                   </div>
-                  <div className="text-right flex flex-col">
-                     <span className="opacity-50 text-[8px]">Quota Rule</span>
-                     <span>{bookingType === PlanType.GROUP ? `${currentPlanForBooking.groupCapacity || 15} Capacity` : '1-on-1 Block'}</span>
-                  </div>
-                </div>
-              )}
+               </div>
 
-              <button 
-                type="submit" 
-                disabled={!formData.timeSlot || isSubmitting}
-                className="w-full py-5 bg-slate-900 text-white rounded-[1.5rem] font-black text-sm uppercase tracking-widest shadow-2xl shadow-slate-200 transition-all active:scale-95 disabled:grayscale disabled:opacity-30"
-              >
-                {isSubmitting ? (
-                   <span className="flex items-center justify-center gap-3">
-                      <i className="fas fa-spinner fa-spin"></i>
-                      ESTABLISHING TRANSACTION...
-                   </span>
-                ) : 'CONFIRM RESERVATION'}
-              </button>
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Capacity Limit</label>
+                  <input type="number" required min="1" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm" value={classFormData.capacity} onChange={e => setClassFormData({ ...classFormData, capacity: Number(e.target.value) })} />
+               </div>
+
+               <button type="submit" className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-sm uppercase tracking-widest shadow-2xl shadow-indigo-200 transition-all active:scale-95 hover:bg-indigo-700">
+                  SAVE & GENERATE SESSIONS
+               </button>
             </form>
           </div>
         </div>
       )}
+
+      {/* Class Completion QR Modal */}
+      <ClassCompletionQR 
+        isOpen={isCompletionQROpen}
+        onClose={() => setIsCompletionQROpen(false)}
+        selectedDate={selectedDate}
+      />
       
       <style>{`
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
       `}</style>
     </div>
   );
