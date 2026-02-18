@@ -1,7 +1,0 @@
-{
-  "name": "Speed Fitness Multi-Branch Gym Manager",
-  "description": "A comprehensive multi-branch gym management system featuring role-based access, automated subscriptions, QR check-ins, performance analytics, and member booking portals.",
-  "requestFramePermissions": [
-    "camera"
-  ]
-}

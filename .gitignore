@@ -1,3 +1,7 @@
+# OneDrive temp files
+.tmp.driveupload/
+.tmp.drivedownload/
+
 # Logs
 logs
 *.log
