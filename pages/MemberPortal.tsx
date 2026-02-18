@@ -1,18 +1,20 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { PlanType, SubscriptionStatus, Feedback, Sale, BodyMetric, Offer } from '../types';
 import InvoiceModal from '../components/InvoiceModal';
+import { QRCodeSVG } from 'qrcode.react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 const TERMS_CONTENT = (
   <div className="prose prose-slate max-w-none space-y-6 text-sm text-slate-600 leading-relaxed font-medium">
     <section>
       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">1. Health and Safety Disclaimer</h4>
-      <p>By using IronFlow facilities, you acknowledge that physical exercise carries inherent risks. You represent that you are in good physical condition and have no medical reason that would prevent you from using the equipment. Always consult a physician before starting a new program.</p>
+      <p>By using Speed Fitness facilities, you acknowledge that physical exercise carries inherent risks. You represent that you are in good physical condition and have no medical reason that would prevent you from using the equipment. Always consult a physician before starting a new program.</p>
     </section>
     <section>
       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">2. AI Coaching and Personal Data</h4>
-      <p>The "Smart AI Coach" utilizes Google Gemini. AI-generated workouts are for informational purposes only. You are responsible for executing exercises with proper form. IronFlow logs metrics (weight, goals) to provide a personalized experience.</p>
+      <p>The "Smart AI Coach" utilizes Google Gemini. AI-generated workouts are for informational purposes only. You are responsible for executing exercises with proper form. Speed Fitness logs metrics (weight, goals) to provide a personalized experience.</p>
     </section>
     <section>
       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">3. Membership Rules</h4>
@@ -20,13 +22,13 @@ const TERMS_CONTENT = (
     </section>
     <section>
       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">4. Liability Waiver</h4>
-      <p>IronFlow Gym shall not be liable for any injury, loss, or damage to person or property arising out of the use of gym facilities or participation in training sessions.</p>
+      <p>Speed Fitness Gym shall not be liable for any injury, loss, or damage to person or property arising out of the use of gym facilities or participation in training sessions.</p>
     </section>
   </div>
 );
 
 const MemberPortal: React.FC = () => {
-  const { currentUser, subscriptions, plans, bookings, addFeedback, feedback, showToast, updateUser, sales, branches, askGemini, metrics, addMetric, offers, users } = useAppContext();
+  const { currentUser, subscriptions, plans, bookings, addFeedback, feedback, showToast, updateUser, sales, branches, askGemini, metrics, addMetric, offers, users, recordAttendance } = useAppContext();
   
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'COACH' | 'METRICS' | 'FEEDBACK'>('OVERVIEW');
   const [feedbackType, setFeedbackType] = useState<'SUGGESTION' | 'COMPLAINT'>('SUGGESTION');
@@ -47,6 +49,46 @@ const MemberPortal: React.FC = () => {
   const [weight, setWeight] = useState('');
   const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [scanMode, setScanMode] = useState(false);
+  const [scanResult, setScanResult] = useState<{success: boolean; message: string} | null>(null);
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+
+  // Initialize scanner when scan mode is activated
+  useEffect(() => {
+    if (!scanMode || !showQRModal) return;
+    
+    const timer = setTimeout(() => {
+      if (scannerRef.current) {
+        scannerRef.current.clear();
+      }
+      
+      const scanner = new Html5QrcodeScanner(
+        "reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        false
+      );
+      
+      scannerRef.current = scanner;
+      
+      scanner.render(
+        (decodedText) => {
+          handleKioskQRScan(decodedText);
+        },
+        (error) => {
+          // ignore scan errors
+        }
+      );
+    }, 500);
+    
+    return () => {
+      clearTimeout(timer);
+      if (scannerRef.current) {
+        scannerRef.current.clear();
+        scannerRef.current = null;
+      }
+    };
+  }, [scanMode, showQRModal]);
 
   if (!currentUser || currentUser.role !== 'MEMBER') {
     return <div className="p-8 text-center text-red-500 font-bold">Access restricted to members only.</div>;
@@ -72,12 +114,63 @@ const MemberPortal: React.FC = () => {
       return;
     }
     updateUser(currentUser.id, { hasAcceptedTerms: true });
-    showToast('Agreement Signed. Welcome to IronFlow Portal!', 'success');
+    showToast('Agreement Signed. Welcome to Speed Fitness Portal!', 'success');
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
     if (scrollTop + clientHeight >= scrollHeight - 20) setHasScrolledToBottom(true);
+  };
+
+  const handleKioskQRScan = async (decodedText: string) => {
+    try {
+      // Parse the QR token: CHECKIN|branchId|locationName|timestamp|random
+      const parts = decodedText.split('|');
+      if (parts[0] !== 'CHECKIN' || parts.length < 5) {
+        setScanResult({ success: false, message: 'Invalid QR code. Please scan a valid QR code.' });
+        return;
+      }
+      
+      const branchId = parts[1];
+      const timestamp = parseInt(parts[3]);
+      const now = Date.now();
+      
+      // Check if token is recent (within 30 seconds)
+      if (now - timestamp > 30000) {
+        setScanResult({ success: false, message: 'QR code expired. Please scan a current QR code.' });
+        return;
+      }
+      
+      // Record attendance
+      const today = new Date().toISOString().split('T')[0];
+      const newAttendance = {
+        id: `att-${Date.now()}`,
+        userId: currentUser.id,
+        date: today,
+        timeIn: new Date().toLocaleTimeString(),
+        branchId: branchId,
+        type: 'MEMBER' as const
+      };
+      
+      await recordAttendance(newAttendance);
+      setScanResult({ success: true, message: 'Check-in successful! Welcome to the gym.' });
+      
+      // Stop scanning
+      if (scannerRef.current) {
+        scannerRef.current.clear();
+        scannerRef.current = null;
+      }
+      setScanMode(false);
+      
+      setTimeout(() => {
+        setScanResult(null);
+        setShowQRModal(false);
+      }, 3000);
+      
+    } catch (error) {
+      console.error('Scan error:', error);
+      setScanResult({ success: false, message: 'Scan failed. Please try again.' });
+    }
   };
 
   const activeOffers = offers.filter(o => o.isActive && (o.branchId === 'GLOBAL' || o.branchId === currentUser.branchId));
@@ -204,7 +297,13 @@ const MemberPortal: React.FC = () => {
                  ))}
               </div>
            </div>
-           <div className="shrink-0 hidden sm:block">
+           <div className="shrink-0 hidden sm:flex gap-2">
+              <button 
+                onClick={() => setShowQRModal(true)}
+                className="bg-blue-600 text-white px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center gap-2"
+              >
+                <i className="fas fa-qrcode"></i> CHECK IN
+              </button>
               <div className="bg-slate-800/50 p-5 rounded-2xl border border-white/5 text-center min-w-[100px]">
                 <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1">ID KEY</p>
                 <i className="fas fa-qrcode text-2xl text-white mb-1"></i>
@@ -239,18 +338,31 @@ const MemberPortal: React.FC = () => {
 
               <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border shadow-sm">
                 <h3 className="text-sm md:text-base font-black text-slate-900 flex items-center gap-3 uppercase tracking-tight mb-6">
-                  <i className="fas fa-receipt text-green-500"></i> Recent Billing
+                  <i className="fas fa-receipt text-green-500"></i> Billing History
                 </h3>
                 <div className="space-y-3">
-                  {memberSales.slice(0, 3).map(sale => (
-                    <div key={sale.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-xl transition-colors">
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-bold text-slate-700 truncate">{plans.find(p => p.id === sale.planId)?.name || 'Retail'}</p>
-                        <p className="text-[8px] text-slate-400 font-bold uppercase">{sale.date}</p>
+                  {memberSales.length === 0 ? (
+                    <p className="text-center text-slate-400 text-xs py-4">No billing records found</p>
+                  ) : (
+                    memberSales.map(sale => (
+                      <div key={sale.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-xl transition-colors group border border-slate-100">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold text-slate-700 truncate">{plans.find(p => p.id === sale.planId)?.name || 'Retail Purchase'}</p>
+                          <p className="text-[8px] text-slate-400 font-bold uppercase">{sale.date} • {sale.paymentMethod}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs font-black text-slate-900">{formatCurrency(sale.amount)}</span>
+                          <button 
+                            onClick={() => setViewingSale(sale)}
+                            className="bg-blue-500 text-white p-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest hover:bg-blue-600 transition-all"
+                            title="View Invoice"
+                          >
+                            <i className="fas fa-download"></i>
+                          </button>
+                        </div>
                       </div>
-                      <span className="text-xs font-black text-slate-900 shrink-0 ml-2">{formatCurrency(sale.amount)}</span>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -395,6 +507,54 @@ const MemberPortal: React.FC = () => {
 
       {viewingSale && (
         <InvoiceModal sale={viewingSale} branch={branches.find(b => b.id === viewingSale.branchId)!} member={currentUser} plan={plans.find(p => p.id === (viewingSale.planId || '')) || { name: 'Retail Store Item', price: viewingSale.amount, durationDays: 0, branchId: viewingSale.branchId, isActive: true, id: '', type: PlanType.GYM }} onClose={() => setViewingSale(null)} />
+      )}
+
+      {/* Check-In Scan Modal */}
+      {showQRModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-md p-8 shadow-2xl animate-[slideUp_0.3s_ease-out]">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 uppercase">Check In</h3>
+                <p className="text-[10px] text-slate-400 font-bold uppercase">Scan QR code</p>
+              </div>
+              <button onClick={() => { setShowQRModal(false); setScanMode(false); }} className="bg-slate-100 p-3 rounded-xl">
+                <i className="fas fa-times text-slate-600"></i>
+              </button>
+            </div>
+            
+            {!scanMode ? (
+              <div className="text-center py-8">
+                <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i className="fas fa-qrcode text-3xl text-blue-600"></i>
+                </div>
+                <h4 className="font-black text-slate-900 uppercase mb-2">Ready to Check In?</h4>
+                <p className="text-sm text-slate-500 mb-6">Click the button below to scan the QR code</p>
+                <button 
+                  onClick={() => setScanMode(true)}
+                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-blue-700 transition-all"
+                >
+                  <i className="fas fa-camera mr-2"></i> Start Scanning
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div id="reader" className="overflow-hidden rounded-2xl border-2 border-slate-100"></div>
+                {scanResult && (
+                  <div className={`p-4 rounded-2xl ${scanResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                    <p className="font-bold text-center">{scanResult.message}</p>
+                  </div>
+                )}
+                <button 
+                  onClick={() => { setScanMode(false); setScanResult(null); }}
+                  className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       <style>{`

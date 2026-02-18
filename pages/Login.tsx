@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAppContext } from '../AppContext';
 import { UserRole } from '../types';
 import { supabase } from '../src/lib/supabase';
+import { MOCK_USERS, BRANCHES, MOCK_PLANS, MOCK_OFFERS } from '../constants';
 
 // Rate limiting storage
 interface LoginAttempt {
@@ -24,10 +25,13 @@ const Login: React.FC = () => {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [lockoutTime, setLockoutTime] = useState<number | null>(null);
   
-  // View states: 'login' | 'forgot' | 'success'
-  const [view, setView] = useState<'login' | 'forgot' | 'success'>('login');
+  // View states: 'login' | 'forgot' | 'success' | 'reset'
+  const [view, setView] = useState<'login' | 'forgot' | 'success' | 'reset'>('login');
   const [forgotEmail, setForgotEmail] = useState('');
   const [isSendingReset, setIsSendingReset] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   // Check for existing session on mount
   useEffect(() => {
@@ -53,6 +57,14 @@ const Login: React.FC = () => {
     };
     checkExistingSession();
   }, [users, setCurrentUser, navigate]);
+
+  // Check for password reset token in URL
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes('type=recovery') || hash.includes('access_token')) {
+      setView('reset');
+    }
+  }, []);
 
   // Check rate limiting
   const checkRateLimit = useCallback((email: string): boolean => {
@@ -105,6 +117,23 @@ const Login: React.FC = () => {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
+  // Seed database with initial data if it's empty
+  const seedDatabaseIfEmpty = async (branches: any[], users: any[], plans: any[], offers: any[]) => {
+    try {
+      const { error: bErr } = await supabase.from('branches').upsert(branches, { onConflict: 'id' });
+      if (bErr) { console.warn('Could not seed branches:', bErr.message); return false; }
+      const { error: uErr } = await supabase.from('users').upsert(users, { onConflict: 'id' });
+      if (uErr) { console.warn('Could not seed users:', uErr.message); return false; }
+      const { error: pErr } = await supabase.from('plans').upsert(plans, { onConflict: 'id' });
+      if (pErr) { console.warn('Could not seed plans:', pErr.message); return false; }
+      const { error: oErr } = await supabase.from('offers').upsert(offers, { onConflict: 'id' });
+      if (oErr) { console.warn('Could not seed offers:', oErr.message); return false; }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -118,135 +147,131 @@ const Login: React.FC = () => {
     setError('');
     setLockoutTime(null);
 
+    // ── Helper: login with a user object ─────────────────────────
+    const loginSuccess = (user: any) => {
+      loginAttempts.delete(email.toLowerCase());
+      setCurrentUser(user);
+      showToast('Login successful', 'success');
+      localStorage.setItem('ironflow_session', JSON.stringify({
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      }));
+      navigate('/dashboard');
+      setIsAuthenticating(false);
+    };
+
+    // ── Helper: try mock-user fallback (when DB is deleted/offline) ─
+    const tryMockFallback = async (): Promise<boolean> => {
+      console.log('🔄 Trying offline/mock fallback...');
+      const hashedInput = await hashPassword(password);
+      const mockUser = MOCK_USERS.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (mockUser && mockUser.password === hashedInput) {
+        console.log('✅ Fallback login success via mock data');
+        // Attempt to auto-seed if DB becomes available later
+        seedDatabaseIfEmpty(BRANCHES, MOCK_USERS.map(u => ({ ...u })), MOCK_PLANS, MOCK_OFFERS)
+          .then(seeded => seeded && console.log('✅ DB auto-seeded'))
+          .catch(() => {});
+        loginSuccess(mockUser);
+        return true;
+      }
+      return false;
+    };
+
     try {
-      // First, try to login with Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email.toLowerCase(),
-        password: password
-      });
+      console.log('=== LOGIN DEBUG ===');
       
-      // If user doesn't exist in Supabase Auth, try to create them
-      if (authError?.message?.includes('Invalid login credentials')) {
-        // Check if user exists in our database directly (not from context)
-        const { data: dbUsers, error: dbError } = await supabase
+      // ── Step 1: Try Supabase DB ───────────────────────────────
+      let dbUser: any = null;
+      let dbAvailable = true;
+
+      try {
+        const { data, error: dbError } = await supabase
           .from('users')
           .select('*')
           .eq('email', email.toLowerCase())
           .single();
         
-        if (dbError || !dbUsers) {
-          console.log('User not found in database:', email);
+        console.log('DB User lookup:', data, 'error:', dbError);
+
+        if (dbError) {
+          // "PGRST116" = row not found (table exists, user doesn't)
+          if (dbError.code === 'PGRST116') {
+            dbUser = null; // table works, user just not found
+          } else {
+            // Any other error = DB/network unavailable
+            dbAvailable = false;
+          }
+        } else {
+          dbUser = data;
+        }
+      } catch (networkErr) {
+        // fetch failed = Supabase project deleted / no internet
+        console.warn('Supabase unreachable (project deleted?), using offline fallback');
+        dbAvailable = false;
+      }
+
+      // ── Step 2: If DB is offline → use mock fallback ──────────
+      if (!dbAvailable) {
+        const ok = await tryMockFallback();
+        if (!ok) {
           recordFailedAttempt(email.toLowerCase());
           setError('Invalid email or password.');
           setIsAuthenticating(false);
-          return;
         }
-        
-        const user = dbUsers;
-        
-        // Verify password against database hash
+        return;
+      }
+
+      // ── Step 3: DB online but user not found ──────────────────
+      if (!dbUser) {
+        // Also try mock (in case DB is partially set up)
+        const ok = await tryMockFallback();
+        if (!ok) {
+          recordFailedAttempt(email.toLowerCase());
+          setError('User not found. Please contact admin.');
+          setIsAuthenticating(false);
+        }
+        return;
+      }
+
+      // ── Step 4: DB user found — verify password ───────────────
+      const user = dbUser;
+      console.log('User from DB:', user.email, 'role:', user.role, 'has password:', user.password ? 'yes' : 'no');
+
+      if (user.password) {
         const hashedInputPassword = await hashPassword(password);
-        if (user.password !== hashedInputPassword) {
-          console.log('Password mismatch for user:', email);
-          recordFailedAttempt(email.toLowerCase());
-          setError('Invalid email or password.');
-          setIsAuthenticating(false);
+        if (user.password === hashedInputPassword) {
+          console.log('Login success with database credentials');
+          loginSuccess(user);
           return;
         }
-        
-        // User exists in DB but not in Auth - create them in Supabase Auth
-        showToast('Setting up your account...', 'success');
-        
-        const { error: signUpError } = await supabase.auth.signUp({
-          email: email.toLowerCase(),
-          password: password,
-          options: {
-            data: {
-              name: user.name,
-              role: user.role
-            }
-          }
-        });
-        
-        if (signUpError) {
-          console.error('Auto-create user error:', signUpError);
-          // If user already exists in Auth (created in previous session), try to login
-          if (signUpError.message.includes('already registered')) {
-            const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
-              email: email.toLowerCase(),
-              password: password
-            });
-            
-            if (!retryError && retryData.user) {
-              loginAttempts.delete(email.toLowerCase());
-              setCurrentUser(user);
-              showToast('Login successful', 'success');
-              navigate('/dashboard');
-              return;
-            }
-          }
-          recordFailedAttempt(email.toLowerCase());
-          setError('Invalid email or password.');
-          setIsAuthenticating(false);
-          return;
-        }
-        
-        // Now try to login again
-        const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+      }
+
+      // ── Step 5: DB password failed → try Supabase Auth ───────
+      console.log('Database password failed, trying Supabase Auth...');
+      try {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
           email: email.toLowerCase(),
           password: password
         });
-        
-        if (retryError || !retryData.user) {
-          recordFailedAttempt(email.toLowerCase());
-          setError('Invalid email or password.');
-          setIsAuthenticating(false);
+        if (!authError && authData?.user) {
+          loginSuccess(user);
           return;
         }
-        
-        // Success! Login the user
-        loginAttempts.delete(email.toLowerCase());
-        setCurrentUser(user);
-        showToast('Login successful', 'success');
-        navigate('/dashboard');
-        return;
+      } catch {
+        // Auth also unreachable
       }
-      
-      if (authError) {
-        recordFailedAttempt(email.toLowerCase());
-        setError('Invalid email or password.');
-        setIsAuthenticating(false);
-        return;
-      }
-      
-      if (authData.user) {
-        // Find the user in our users table directly from database
-        const { data: dbUser, error: dbError } = await supabase
-          .from('users')
-          .select('*')
-          .eq('email', email.toLowerCase())
-          .single();
-        
-        if (dbError || !dbUser) {
-          // User exists in Auth but not in our users table
-          setError('Account not found in system. Contact admin.');
-          setIsAuthenticating(false);
-          // Sign out from Supabase
-          await supabase.auth.signOut();
-          return;
-        }
-        
-        // Clear failed attempts on successful login
-        loginAttempts.delete(email.toLowerCase());
-        
-        setCurrentUser(dbUser);
-        showToast('Login successful', 'success');
-        navigate('/dashboard');
-        setIsAuthenticating(false);
-      }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
+
+      recordFailedAttempt(email.toLowerCase());
+      setError('Invalid email or password.');
       setIsAuthenticating(false);
+    } catch (err) {
+      console.error('Login error:', err);
+      // Last resort: try mock fallback
+      const ok = await tryMockFallback();
+      if (!ok) {
+        setError('An error occurred. Please try again.');
+        setIsAuthenticating(false);
+      }
     }
   };
 
@@ -270,7 +295,7 @@ const Login: React.FC = () => {
       
       // Try to send password reset email via Supabase Auth
       const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.toLowerCase(), {
-        redirectTo: 'https://speedfitness.org/reset-password'
+        redirectTo: window.location.origin + '/login#type=recovery'
       });
       
       if (error) {
@@ -293,6 +318,42 @@ const Login: React.FC = () => {
     }
   };
 
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    
+    if (newPassword.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+    
+    setIsResetting(true);
+    
+    try {
+      const { error: resetError } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+      
+      if (resetError) {
+        setError(resetError.message);
+      } else {
+        showToast('Password updated successfully!', 'success');
+        setView('login');
+        setNewPassword('');
+        setConfirmPassword('');
+      }
+    } catch (err) {
+      setError('Failed to reset password');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 md:p-8 relative overflow-hidden">
       {/* Background Decor */}
@@ -310,7 +371,7 @@ const Login: React.FC = () => {
                  <div className="bg-white/20 backdrop-blur-md p-2 rounded-xl">
                     <i className="fas fa-dumbbell text-2xl"></i>
                  </div>
-                 <span className="font-black text-2xl tracking-tighter uppercase">IronFlow</span>
+                 <span className="font-black text-2xl tracking-tighter uppercase">Speed Fitness</span>
               </div>
               <h1 className="text-5xl font-black leading-tight mb-6 uppercase">Master Your Fitness Empire.</h1>
               <p className="text-blue-100 font-medium leading-relaxed">Enterprise-grade multi-branch infrastructure for the future of physical wellness.</p>
@@ -336,7 +397,7 @@ const Login: React.FC = () => {
             <div className="animate-[fadeIn_0.3s_ease-out]">
               <div className="mb-10 text-center lg:text-left">
                 <h2 className="text-3xl font-black text-white mb-2 uppercase tracking-tight">System Access</h2>
-                <p className="text-slate-400 font-medium">IronFlow Management Protocol v4.2</p>
+                <p className="text-slate-400 font-medium">Speed Fitness Management Protocol v4.2</p>
               </div>
 
               <form onSubmit={handleManualLogin} className="space-y-5">
@@ -483,6 +544,70 @@ const Login: React.FC = () => {
               >
                 Back to Authentication
               </button>
+            </div>
+          )}
+
+          {view === 'reset' && (
+            <div className="animate-[fadeIn_0.4s_ease-out]">
+              <div className="text-center mb-8">
+                <div className="w-20 h-20 bg-blue-500/10 border border-blue-500/20 rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-blue-500/10">
+                  <i className="fas fa-lock text-3xl text-blue-500"></i>
+                </div>
+                <h2 className="text-3xl font-black text-white mb-3 uppercase tracking-tight">Reset Password</h2>
+                <p className="text-slate-400 font-medium leading-relaxed px-6">
+                  Enter your new password below.
+                </p>
+              </div>
+              
+              <form onSubmit={handlePasswordReset} className="space-y-5">
+                {error && (
+                  <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm font-medium animate-shake">
+                    {error}
+                  </div>
+                )}
+                
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-wider mb-3">New Password</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full p-4 bg-slate-800/50 border border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-white font-medium transition-all"
+                    placeholder="Enter new password"
+                    required
+                    minLength={6}
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-wider mb-3">Confirm Password</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full p-4 bg-slate-800/50 border border-slate-700 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-white font-medium transition-all"
+                    placeholder="Confirm new password"
+                    required
+                    minLength={6}
+                  />
+                </div>
+                
+                <button
+                  type="submit"
+                  disabled={isResetting}
+                  className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white font-black text-sm uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-blue-600/20 active:scale-[0.98] mt-6"
+                >
+                  {isResetting ? 'Updating...' : 'Update Password'}
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => { setView('login'); setNewPassword(''); setConfirmPassword(''); setError(''); }}
+                  className="w-full py-3 text-slate-400 hover:text-white font-medium text-sm transition-colors"
+                >
+                  Back to Login
+                </button>
+              </form>
             </div>
           )}
         </div>

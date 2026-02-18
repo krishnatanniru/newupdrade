@@ -6,7 +6,7 @@ import { ImageUploadModal } from '../components/ImageUploadModal';
 import { generateMonthlyPayroll, getShiftSummary } from '../src/lib/payroll';
 
 const Staff: React.FC = () => {
-  const { users, branches, currentUser, addUser, updateUser, deleteUser, attendance, bookings, holidays } = useAppContext();
+  const { users, branches, currentUser, addUser, updateUser, deleteUser, attendance, bookings, holidays, showToast } = useAppContext();
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [isEditModalOpen, setEditModalOpen] = useState(false);
   const [isLogsModalOpen, setLogsModalOpen] = useState(false);
@@ -18,6 +18,7 @@ const Staff: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    password: '',
     role: UserRole.TRAINER,
     branchId: branches[0]?.id || '',
     shifts: [{ start: '09:00', end: '13:00' }] as Shift[],
@@ -25,7 +26,8 @@ const Staff: React.FC = () => {
     commissionPercentage: 10,
     emergencyContact: '',
     avatar: '',
-    weekOffDay: 0 // Default to Sunday
+    weekOffDay: 0,
+    phone: ''
   });
   const [isImageModalOpen, setImageModalOpen] = useState(false);
 
@@ -38,6 +40,7 @@ const Staff: React.FC = () => {
     setFormData({
       name: '',
       email: '',
+      password: '',
       role: UserRole.TRAINER,
       branchId: currentUser?.branchId || branches[0]?.id || '',
       shifts: [{ start: '09:00', end: '13:00' }],
@@ -45,7 +48,8 @@ const Staff: React.FC = () => {
       commissionPercentage: 10,
       emergencyContact: '',
       avatar: '',
-      weekOffDay: 0
+      weekOffDay: 0,
+      phone: ''
     });
     setAddModalOpen(true);
   };
@@ -55,6 +59,7 @@ const Staff: React.FC = () => {
     setFormData({
       name: staff.name,
       email: staff.email,
+      password: staff.password || '',
       role: staff.role,
       branchId: staff.branchId || branches[0]?.id || '',
       shifts: staff.shifts && staff.shifts.length > 0 ? staff.shifts : [{ start: '09:00', end: '13:00' }],
@@ -62,7 +67,8 @@ const Staff: React.FC = () => {
       commissionPercentage: staff.commissionPercentage || 0,
       emergencyContact: staff.emergencyContact || '',
       avatar: staff.avatar || '',
-      weekOffDay: staff.weekOffDay ?? 0
+      weekOffDay: staff.weekOffDay ?? 0,
+      phone: staff.phone || ''
     });
     setEditModalOpen(true);
   };
@@ -92,35 +98,77 @@ const Staff: React.FC = () => {
     return generateMonthlyPayroll(selectedStaff, attendance, payrollYear, payrollMonth + 1, bookings, staffHolidays);
   }, [selectedStaff, attendance, payrollYear, payrollMonth, bookings, staffHolidays]);
 
-  const handleAddStaff = (e: React.FormEvent) => {
+  const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newStaff: User = {
-      id: `staff-${Date.now()}`,
-      name: formData.name,
-      email: formData.email,
-      role: formData.role,
-      branchId: formData.branchId,
-      shifts: formData.shifts,
-      hourlyRate: formData.hourlyRate,
-      commissionPercentage: formData.commissionPercentage,
-      emergencyContact: formData.emergencyContact,
-      avatar: formData.avatar || `https://i.pravatar.cc/150?u=${Date.now()}`,
-      weekOffDay: formData.weekOffDay
-    };
-    addUser(newStaff);
-    setAddModalOpen(false);
+    
+    // Validate required fields
+    if (!formData.name.trim()) {
+      showToast('Please enter staff name', 'error');
+      return;
+    }
+    if (!formData.email.trim()) {
+      showToast('Please enter work email', 'error');
+      return;
+    }
+    if (!formData.password.trim()) {
+      showToast('Please set a login password', 'error');
+      return;
+    }
+    if (!formData.emergencyContact.trim()) {
+      showToast('Please enter emergency contact', 'error');
+      return;
+    }
+    if (!formData.branchId) {
+      showToast('Please select a branch', 'error');
+      return;
+    }
+
+    try {
+      const newStaff: User = {
+        id: `staff-${Date.now()}`,
+        name: formData.name,
+        email: formData.email,
+        password: formData.password,
+        role: formData.role,
+        branchId: formData.branchId,
+        shifts: formData.shifts,
+        hourlyRate: formData.hourlyRate,
+        commissionPercentage: formData.commissionPercentage,
+        emergencyContact: formData.emergencyContact,
+        avatar: formData.avatar || `https://i.pravatar.cc/150?u=${Date.now()}`,
+        weekOffDay: formData.weekOffDay,
+        phone: formData.phone
+      };
+      
+      await addUser(newStaff);
+      setAddModalOpen(false);
+      showToast('Staff member added successfully!', 'success');
+    } catch (error: any) {
+      console.error('Error adding staff:', error);
+      showToast(error?.message || 'Failed to add staff member. Please try again.', 'error');
+    }
   };
 
-  const handleUpdateStaff = (e: React.FormEvent) => {
+  const handleUpdateStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedStaff) {
-      updateUser(selectedStaff.id, formData);
-      setEditModalOpen(false);
-      setSelectedStaff(null);
+      try {
+        await updateUser(selectedStaff.id, formData);
+        setEditModalOpen(false);
+        setSelectedStaff(null);
+        showToast('Staff profile updated successfully!', 'success');
+      } catch (error) {
+        console.error('Error updating staff:', error);
+        showToast('Failed to update staff profile. Please try again.', 'error');
+      }
     }
   };
 
   const handleDeleteStaff = (id: string) => {
+    if (id === currentUser?.id) {
+      showToast('You cannot delete your own profile', 'error');
+      return;
+    }
     if (window.confirm('Are you sure you want to remove this staff member?')) {
       deleteUser(id);
     }
@@ -282,7 +330,7 @@ const Staff: React.FC = () => {
                             <i className="fas fa-user-pen"></i>
                           </button>
                           )}
-                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
+                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && staff.id !== currentUser?.id && (
                           <button 
                             onClick={() => handleDeleteStaff(staff.id)}
                             className="p-2.5 text-red-600 hover:bg-red-50 rounded-xl transition-all"
@@ -390,6 +438,13 @@ const Staff: React.FC = () => {
               </div>
 
               <div className="space-y-1">
+                <label className="text-[10px] font-black text-blue-600 uppercase tracking-widest ml-1 flex items-center gap-2">
+                   <i className="fas fa-mobile-screen"></i> Mobile Number
+                </label>
+                <input type="tel" className="w-full p-4 bg-blue-50 border border-blue-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-black text-sm text-blue-700 placeholder:text-blue-200" placeholder="+91 XXXXX XXXXX" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
+              </div>
+
+              <div className="space-y-1">
                 <label className="text-[10px] font-black text-red-500 uppercase tracking-widest ml-1 flex items-center gap-2">
                    <i className="fas fa-life-ring"></i> Emergency Contact Number
                 </label>
@@ -399,6 +454,11 @@ const Staff: React.FC = () => {
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Work Email</label>
                 <input required type="email" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-orange-500 uppercase tracking-widest ml-1">Login Password</label>
+                <input required type="password" className="w-full p-4 bg-orange-50 border border-orange-100 rounded-2xl outline-none focus:ring-2 focus:ring-orange-500 font-bold text-sm" placeholder="Set login password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
               </div>
               
               <div className="grid grid-cols-2 gap-4">
@@ -414,6 +474,7 @@ const Staff: React.FC = () => {
                     <option value={UserRole.TRAINER}>Trainer</option>
                     <option value={UserRole.RECEPTIONIST}>Receptionist</option>
                     <option value={UserRole.STAFF}>General Staff</option>
+                    <option value={UserRole.KIOSK}>Kiosk User</option>
                   </select>
                 </div>
               </div>

@@ -245,7 +245,7 @@ const Plans: React.FC = () => {
                  <label className="flex items-center justify-between cursor-pointer group">
                     <div className="flex flex-col">
                        <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Multi-Branch Access</span>
-                       <span className="text-[9px] text-slate-400 font-medium">Allows athlete to enter any IronFlow location</span>
+                       <span className="text-[9px] text-slate-400 font-medium">Allows athlete to enter any Speed Fitness location</span>
                     </div>
                     <div 
                       onClick={() => setFormData({...formData, isMultiBranch: !formData.isMultiBranch})}

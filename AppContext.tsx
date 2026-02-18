@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User, Branch, Plan, Subscription, Sale, Attendance, Booking, Feedback, UserRole, SubscriptionStatus, Communication, CommType, InventoryItem, BodyMetric, Offer, ClassSession, Expense, Holiday, Kiosk } from './types';
+import { User, Branch, Plan, Subscription, Sale, Attendance, Booking, Feedback, UserRole, SubscriptionStatus, Communication, CommType, InventoryItem, BodyMetric, Offer, ClassSession, Expense, Holiday } from './types';
 import { MOCK_USERS, BRANCHES, MOCK_PLANS, MOCK_SUBSCRIPTIONS, MOCK_OFFERS, MOCK_ATTENDANCE, MOCK_SALES, MOCK_BOOKINGS } from './constants';
 import { GoogleGenAI } from "@google/genai";
 import { supabase } from './src/lib/supabase';
@@ -22,14 +22,10 @@ interface AppContextType {
   classSchedules: ClassSession[];
   expenses: Expense[];
   holidays: Holiday[];
-  kiosks: Kiosk[];
   addHoliday: (holiday: Holiday, sendNotificationToUsers?: boolean) => Promise<void>;
   deleteHoliday: (id: string) => Promise<void>;
   sendHolidayNotification: (holiday: Holiday) => Promise<void>;
   sendBranchNotification: (branchId: string, subject: string, message: string, targetRoles?: UserRole[]) => Promise<void>;
-  addKiosk: (kiosk: Kiosk) => Promise<void>;
-  updateKiosk: (id: string, updates: Partial<Kiosk>) => Promise<void>;
-  deleteKiosk: (id: string) => Promise<void>;
   settlementRate: number;
   setSettlementRate: (rate: number) => void;
   isGlobalLoading: boolean;
@@ -112,7 +108,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [classSchedules, setClassSchedules] = useState<ClassSession[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
-  const [kiosks, setKiosks] = useState<Kiosk[]>([]);
   const [settlementRate, setSettlementRate] = useState<number>(250);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isGlobalLoading, setGlobalLoading] = useState(false);
@@ -217,69 +212,96 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const fetchData = async () => {
     setGlobalLoading(true);
     try {
-      const { data: bData } = await supabase.from('branches').select('*');
+      // Helper: safe fetch from supabase with network-failure guard
+      const safeFetch = async (table: string) => {
+        try {
+          const { data, error } = await supabase.from(table).select('*');
+          if (error) throw error;
+          return data;
+        } catch {
+          return null; // Supabase unreachable
+        }
+      };
+
+      // Check if Supabase is reachable by fetching branches
+      const bData = await safeFetch('branches');
+
+      if (bData === null) {
+        // ── OFFLINE MODE: Supabase project deleted or unreachable ──
+        console.warn('⚠️ Supabase unreachable — loading mock/fallback data');
+        setBranches(BRANCHES);
+        setUsers(MOCK_USERS as any);
+        setPlans(MOCK_PLANS);
+        setSubscriptions(MOCK_SUBSCRIPTIONS);
+        setOffers(MOCK_OFFERS);
+        setAttendance(MOCK_ATTENDANCE);
+        setSales(MOCK_SALES);
+        setBookings(MOCK_BOOKINGS);
+        showToast('Running in offline mode. Data will not be saved.', 'error');
+        setGlobalLoading(false);
+        return;
+      }
+
+      // ── ONLINE MODE ────────────────────────────────────────────
       if (bData && bData.length > 0) setBranches(bData);
       else {
         const { error } = await supabase.from('branches').insert(BRANCHES);
         if (!error) setBranches(BRANCHES);
       }
 
-      const { data: uData } = await supabase.from('users').select('*');
+      const uData = await safeFetch('users');
       if (uData && uData.length > 0) setUsers(uData);
-      else {
+      else if (uData !== null) {
         const { error } = await supabase.from('users').insert(MOCK_USERS);
-        if (!error) setUsers(MOCK_USERS);
+        if (!error) setUsers(MOCK_USERS as any);
       }
 
-      const { data: pData } = await supabase.from('plans').select('*');
+      const pData = await safeFetch('plans');
       if (pData && pData.length > 0) setPlans(pData);
-      else {
-          const { error } = await supabase.from('plans').insert(MOCK_PLANS);
-          if (!error) setPlans(MOCK_PLANS);
+      else if (pData !== null) {
+        const { error } = await supabase.from('plans').insert(MOCK_PLANS);
+        if (!error) setPlans(MOCK_PLANS);
       }
 
-      const { data: sData } = await supabase.from('subscriptions').select('*');
+      const sData = await safeFetch('subscriptions');
       if (sData) setSubscriptions(sData);
 
-      const { data: slData } = await supabase.from('sales').select('*');
+      const slData = await safeFetch('sales');
       if (slData) setSales(slData);
 
-      const { data: aData } = await supabase.from('attendance').select('*');
+      const aData = await safeFetch('attendance');
       if (aData) setAttendance(aData);
 
-      const { data: bkData } = await supabase.from('bookings').select('*');
+      const bkData = await safeFetch('bookings');
       if (bkData) setBookings(bkData);
 
-      const { data: fData } = await supabase.from('feedback').select('*');
+      const fData = await safeFetch('feedback');
       if (fData) setFeedback(fData);
-      
-      const { data: cData } = await supabase.from('communications').select('*');
+
+      const cData = await safeFetch('communications');
       if (cData) setCommunications(cData);
 
-      const { data: iData } = await supabase.from('inventory').select('*');
+      const iData = await safeFetch('inventory');
       if (iData) setInventory(iData);
 
-      const { data: mData } = await supabase.from('metrics').select('*');
+      const mData = await safeFetch('metrics');
       if (mData) setMetrics(mData);
 
-      const { data: oData } = await supabase.from('offers').select('*');
+      const oData = await safeFetch('offers');
       if (oData && oData.length > 0) setOffers(oData);
-      else {
+      else if (oData !== null) {
         const { error } = await supabase.from('offers').insert(MOCK_OFFERS);
-        if(!error) setOffers(MOCK_OFFERS);
+        if (!error) setOffers(MOCK_OFFERS);
       }
 
-      const { data: csData } = await supabase.from('class_schedules').select('*');
+      const csData = await safeFetch('class_schedules');
       if (csData) setClassSchedules(csData);
 
-      const { data: exData } = await supabase.from('expenses').select('*');
+      const exData = await safeFetch('expenses');
       if (exData) setExpenses(exData);
 
-      const { data: hData } = await supabase.from('holidays').select('*');
+      const hData = await safeFetch('holidays');
       if (hData) setHolidays(hData);
-
-      const { data: kData } = await supabase.from('kiosks').select('*');
-      if (kData) setKiosks(kData);
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -314,9 +336,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'holidays' }, () => {
          supabase.from('holidays').select('*').then(({ data }) => { if (data) setHolidays(data); });
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'kiosks' }, () => {
-         supabase.from('kiosks').select('*').then(({ data }) => { if (data) setKiosks(data); });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, () => {
          supabase.from('inventory').select('*').then(({ data }) => { if (data) setInventory(data); });
@@ -397,31 +416,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       userToAdd.password = await hashPassword(userToAdd.password);
     }
     
+    console.log('Adding user with password:', userToAdd.password ? 'yes' : 'no');
     const { error } = await supabase.from('users').insert(userToAdd);
-    if (!error) {
-      setUsers(prev => [...prev, userToAdd]);
-      showToast('User added successfully');
-    } else {
-      console.error(error);
-      showToast('Failed to add user', 'error');
+    if (error) {
+      console.error('Error adding user:', error);
+      throw new Error(error.message);
     }
+    setUsers(prev => [...prev, userToAdd]);
+    showToast('User added successfully');
   };
 
   const updateUser = async (id: string, updates: Partial<User>) => {
     const { error } = await supabase.from('users').update(updates).eq('id', id);
-    if (!error) {
-      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
-      if (currentUser?.id === id) setCurrentUser(prev => prev ? { ...prev, ...updates } : null);
-      showToast('User updated');
-    } else showToast('Failed to update user', 'error');
+    if (error) {
+      console.error('Update user error:', error);
+      throw new Error(error.message);
+    }
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
+    if (currentUser?.id === id) setCurrentUser(prev => prev ? { ...prev, ...updates } : null);
   };
 
   const deleteUser = async (id: string) => {
+    console.log('Deleting user with ID:', id);
+    
+    // First, delete related records to avoid foreign key constraint errors
+    // Delete communications
+    await supabase.from('communications').delete().eq('userId', id);
+    // Delete subscriptions
+    await supabase.from('subscriptions').delete().eq('memberId', id);
+    // Delete sales
+    await supabase.from('sales').delete().eq('memberId', id);
+    // Delete attendance
+    await supabase.from('attendance').delete().eq('userId', id);
+    // Delete bookings
+    await supabase.from('bookings').delete().eq('memberId', id);
+    // Delete metrics
+    await supabase.from('metrics').delete().eq('memberId', id);
+    
     const { error } = await supabase.from('users').delete().eq('id', id);
-    if (!error) {
+    if (error) {
+      console.error('Delete user error:', error);
+      showToast('Failed to delete user: ' + error.message, 'error');
+    } else {
       setUsers(prev => prev.filter(u => u.id !== id));
       showToast('User deleted');
-    } else showToast('Failed to delete user', 'error');
+    }
   };
 
   const addPlan = async (p: Plan) => {
@@ -640,26 +679,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     else showToast('Failed to cancel class', 'error');
   };
 
-  const addKiosk = async (kiosk: Kiosk) => {
-    const { error } = await supabase.from('kiosks').insert(kiosk);
-    if (!error) {
-      setKiosks(prev => [...prev, kiosk]);
-      showToast('Kiosk added successfully');
-    } else showToast('Failed to add kiosk', 'error');
-  };
-
-  const updateKiosk = async (id: string, updates: Partial<Kiosk>) => {
-    const { error } = await supabase.from('kiosks').update(updates).eq('id', id);
-    if (!error) setKiosks(prev => prev.map(k => k.id === id ? { ...k, ...updates } : k));
-    else showToast('Failed to update kiosk', 'error');
-  };
-
-  const deleteKiosk = async (id: string) => {
-    const { error } = await supabase.from('kiosks').delete().eq('id', id);
-    if (!error) setKiosks(prev => prev.filter(k => k.id !== id));
-    else showToast('Failed to delete kiosk', 'error');
-  };
-
   const addExpense = async (expense: Expense) => {
     const { error } = await supabase.from('expenses').insert(expense);
     if (!error) {
@@ -856,11 +875,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Helper function to hash passwords
   const hashPassword = async (password: string): Promise<string> => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    try {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(password);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+      // Fallback for non-secure contexts
+      let hash = '';
+      for (let i = 0; i < password.length; i++) {
+        hash += password.charCodeAt(i).toString(16);
+      }
+      return hash;
+    }
   };
 
   // Helper function to generate secure random password
@@ -949,26 +977,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           userId: newUserId,
           type: CommType.SMS,
           recipient: 'In-App',
-          subject: `Welcome to IronFlow! 🎉`,
+          subject: `Welcome to Speed Fitness! 🎉`,
           body: `Welcome ${newUser.name}! Your athlete ID is ${newUser.memberId}. Your temporary login token is: ${usePassword}. You can login now and change your token in Settings. This is an important notification - please check the Communications section for more details.`,
           category: 'WELCOME',
           branchId: branchId
         });
 
-        showToast(`Member enrolled! Invoice: ${newSale.invoiceNo}. Welcome notification sent (In-App Only).`);
+        showToast(`Member enrolled! Invoice: ${newSale.invoiceNo}. Login Password: ${usePassword} (Share with member)`);
       } else {
         // No plan - just user registration
         await sendNotification({
           userId: newUserId,
           type: CommType.SMS,
           recipient: 'In-App',
-          subject: `Welcome to IronFlow! 🎉`,
+          subject: `Welcome to Speed Fitness! 🎉`,
           body: `Welcome ${newUser.name}! Your athlete ID is ${newUser.memberId}. Your temporary login token is: ${usePassword}. Login to purchase a membership and get started. This is an important notification - please check the Communications section for more details.`,
           category: 'WELCOME',
           branchId: branchId
         });
 
-        showToast(`Account created! Welcome notification sent (In-App Only). Please login to purchase a membership.`);
+        showToast(`Account created! Login Password: ${usePassword} (Share with member). Please login to purchase a membership.`);
       }
     } catch (e) {
       console.error(e);
@@ -1043,8 +1071,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       attendance, bookings, feedback, communications, inventory, metrics, offers,
       classSchedules, addClassTemplate, deleteClassTemplate, generateUpcomingClasses, addClassSession, deleteClassSession,
       expenses, addExpense, deleteExpense,
-      holidays, kiosks, addHoliday, deleteHoliday, sendHolidayNotification, sendBranchNotification,
-      addKiosk, updateKiosk, deleteKiosk,
+      holidays, addHoliday, deleteHoliday, sendHolidayNotification, sendBranchNotification,
       settlementRate, setSettlementRate, isGlobalLoading, setGlobalLoading,
       addBranch, updateBranch, addUser, updateUser, deleteUser, addPlan, updatePlan,
       addSubscription, addSale, recordAttendance, updateAttendance, addBooking, addFeedback, updateFeedbackStatus,
@@ -1061,7 +1088,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[10000] flex items-center justify-center">
            <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-4 animate-bounce">
               <i className="fas fa-dumbbell text-4xl text-blue-600 animate-spin"></i>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Syncing with IronFlow Cloud...</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Syncing with Speed Fitness Cloud...</p>
            </div>
         </div>
       )}

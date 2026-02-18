@@ -186,7 +186,7 @@ const MembershipStore: React.FC = () => {
             <div style={{ backgroundColor: branding.color }} className="p-6 text-white flex justify-between items-start">
                <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="font-bold text-lg">{userBranch?.name || 'IronFlow'}</span>
+                    <span className="font-bold text-lg">{userBranch?.name || 'Speed Fitness'}</span>
                     <i className={`fas ${branding.icon} text-[10px] text-white/70`}></i>
                   </div>
                   <p className="text-[11px] text-white/80 font-medium tracking-tight uppercase">Checkout via {branding.name}</p>

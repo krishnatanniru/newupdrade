@@ -3,7 +3,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'YOUR_SUPABASE_URL';
+// NOTE: Replace with your actual SERVICE ROLE KEY from Supabase dashboard (not the anon key)
+const supabaseUrl = 'https://fdgsqxagqnabvuzcikob.supabase.co';
 const supabaseKey = 'YOUR_SUPABASE_SERVICE_ROLE_KEY';
 
 const supabase = createClient(supabaseUrl, supabaseKey);

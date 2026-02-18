@@ -308,14 +308,13 @@ const Dashboard: React.FC = () => {
   const currentMonthIdx = new Date().getMonth();
   
   const revenueData = months.slice(0, currentMonthIdx + 1).map((month, idx) => {
-    let baseline = 140000 + (idx * 5000);
     const monthSales = filteredSales
       .filter(s => new Date(s.date).getMonth() === idx)
       .reduce((acc, s) => acc + s.amount, 0);
     
     return {
       month,
-      revenue: monthSales > 0 ? monthSales : baseline
+      revenue: monthSales
     };
   });
 

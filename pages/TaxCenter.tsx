@@ -80,7 +80,7 @@ const TaxCenter: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `IronFlow_${currentBranch?.name}_${months[selectedMonth]}_${selectedYear}.json`;
+    link.download = `Speed Fitness_${currentBranch?.name}_${months[selectedMonth]}_${selectedYear}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

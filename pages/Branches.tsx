@@ -5,7 +5,7 @@ import { Branch } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
 
 const Branches: React.FC = () => {
-  const { branches, users, sales, addBranch, updateBranch, currentUser } = useAppContext();
+  const { branches, users, sales, addBranch, updateBranch, currentUser, showToast } = useAppContext();
   const [isModalOpen, setModalOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
@@ -48,7 +48,8 @@ const Branches: React.FC = () => {
     latitude: 0,
     longitude: 0,
     geofenceRadius: 100,
-    termsAndConditions: ''
+    termsAndConditions: '',
+    isVisibleForRegistration: true
   });
 
   const getBranchStats = (branchId: string) => {
@@ -63,23 +64,25 @@ const Branches: React.FC = () => {
       name: '', 
       address: '', 
       phone: '', 
-      email: '', 
-      gstin: '', 
-      gstPercentage: 18, 
+      email: '',
+      gstin: '',
+      gstPercentage: 18,
       gateWebhookUrl: '',
-      paymentProvider: 'RAZORPAY',
+      paymentProvider: 'RAZORPAY' as 'RAZORPAY' | 'STRIPE' | 'PAYTM',
       paymentApiKey: '',
       paymentMerchantId: '',
-      emailProvider: 'SENDGRID',
+      emailProvider: 'SENDGRID' as 'SENDGRID' | 'MAILGUN' | 'SMTP',
       emailApiKey: '',
       emailFromAddress: '',
-      smsProvider: 'TWILIO',
+      smsProvider: 'TWILIO' as 'TWILIO' | 'MSG91' | 'GUPSHUP',
       smsApiKey: '',
       smsSenderId: '',
       equipment: '',
       latitude: 0,
       longitude: 0,
-      geofenceRadius: 100
+      geofenceRadius: 100,
+      termsAndConditions: '',
+      isVisibleForRegistration: true
     });
     setModalOpen(true);
   };
@@ -107,7 +110,8 @@ const Branches: React.FC = () => {
       latitude: branch.latitude || 0,
       longitude: branch.longitude || 0,
       geofenceRadius: branch.geofenceRadius || 100,
-      termsAndConditions: branch.termsAndConditions || ''
+      termsAndConditions: branch.termsAndConditions || '',
+      isVisibleForRegistration: branch.isVisibleForRegistration !== false // Default to true if not set
     });
     setModalOpen(true);
   };
@@ -116,7 +120,10 @@ const Branches: React.FC = () => {
     e.preventDefault();
     try {
       if (selectedBranch) {
-        await updateBranch(selectedBranch.id, formData);
+        await updateBranch(selectedBranch.id, {
+          ...formData,
+          id: selectedBranch.id // Preserve the original ID
+        });
       } else {
         await addBranch({
           id: `b-${Date.now()}`,
@@ -124,9 +131,10 @@ const Branches: React.FC = () => {
         });
       }
       setModalOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Submit error:', err);
-      alert('Failed to save branch. Please try again.');
+      const errorMessage = err.message || err.error?.message || 'Unknown error occurred';
+      alert(`Failed to save branch: ${errorMessage}. Please try again.`);
     }
   };
 
@@ -258,7 +266,14 @@ const Branches: React.FC = () => {
                 <p className="text-[10px] text-slate-400 font-medium">Refreshes every 15 seconds</p>
              </div>
 
-             <p className="text-[10px] text-slate-400 font-medium px-6 mb-8 uppercase tracking-widest">Members & Staff should scan this code using the IronFlow App Scanner to record attendance.</p>
+             <p className="text-[10px] text-slate-400 font-medium px-6 mb-8 uppercase tracking-widest">Members & Staff should scan this code using the Speed Fitness App Scanner to record attendance.</p>
+             
+             <button 
+               onClick={() => window.open(`/kiosk/${currentActiveBranch.id}`, '_blank', 'width=800,height=600,menubar=no,toolbar=no,location=no,status=no')}
+               className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-sm hover:bg-blue-700 transition-all uppercase tracking-widest shadow-xl mb-4 flex items-center justify-center gap-2"
+             >
+               <i className="fas fa-expand"></i> Open Full Screen
+             </button>
              
              <button 
                onClick={() => setQrModalOpen(false)}
@@ -427,6 +442,24 @@ Your custom terms here..."
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold text-indigo-400 uppercase">API Key Secret (Optional)</label>
                   <input placeholder={paymentPlaceholders.key} className="w-full p-3 bg-indigo-50/30 border border-indigo-100 rounded-xl outline-none text-xs font-mono" value={formData.paymentMerchantId} onChange={e => setFormData({...formData, paymentMerchantId: e.target.value})} />
+                </div>
+              </section>
+
+              <section className="space-y-3 pt-6 border-t">
+                <label className="text-[10px] font-black text-green-600 uppercase tracking-widest flex items-center gap-2">
+                  <i className="fas fa-user-plus"></i> Registration Visibility
+                </label>
+                <div className="flex items-center justify-between p-4 bg-green-50 rounded-xl border border-green-100">
+                  <div>
+                    <p className="font-bold text-sm text-green-800">Show in Registration</p>
+                    <p className="text-xs text-green-600">Controls if this branch appears in the registration form</p>
+                  </div>
+                  <div 
+                    onClick={() => setFormData({...formData, isVisibleForRegistration: !formData.isVisibleForRegistration})}
+                    className={`w-12 h-6 rounded-full transition-all relative ${formData.isVisibleForRegistration ? 'bg-green-600' : 'bg-gray-300'}`}
+                  >
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${formData.isVisibleForRegistration ? 'left-0.5 translate-x-6' : 'left-0.5'}`}></div>
+                  </div>
                 </div>
               </section>
 

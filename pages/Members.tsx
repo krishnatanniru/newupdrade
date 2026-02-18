@@ -14,7 +14,7 @@ const formatCurrency = (amount: number) => {
 };
 
 const Members: React.FC = () => {
-  const { users, subscriptions, plans, currentUser, enrollMember, attendance, updateUser, verifyTransactionCode, showToast } = useAppContext();
+  const { users, subscriptions, plans, currentUser, enrollMember, attendance, updateUser, deleteUser, verifyTransactionCode, showToast } = useAppContext();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [activeModal, setActiveModal] = useState<'logs' | 'manage' | null>(null);
@@ -22,8 +22,8 @@ const Members: React.FC = () => {
   const [isVerifying, setIsVerifying] = useState(false);
   
   // Form States
-   const [enrollData, setEnrollData] = useState({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '', avatar: '', startDate: new Date().toISOString().split('T')[0], discount: 0, paymentMethod: 'ONLINE' as 'CASH' | 'CARD' | 'ONLINE' | 'POS', transactionCode: '' });
-   const [manageData, setManageData] = useState({ name: '', email: '', emergencyContact: '', address: '', avatar: '' });
+   const [enrollData, setEnrollData] = useState({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '', avatar: '', startDate: new Date().toISOString().split('T')[0], discount: 0, paymentMethod: 'ONLINE' as 'CASH' | 'CARD' | 'ONLINE' | 'POS', transactionCode: '', phone: '' });
+   const [manageData, setManageData] = useState({ name: '', email: '', emergencyContact: '', address: '', avatar: '', phone: '' });
    const [isImageModalOpen, setImageModalOpen] = useState(false);
    const [isEnrollImageModalOpen, setEnrollImageModalOpen] = useState(false);
    const [isPaymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -54,7 +54,7 @@ const Members: React.FC = () => {
           email: enrollData.email,
           emergencyContact: enrollData.emergencyContact,
           address: enrollData.address,
-          phone: enrollData.emergencyContact, // Using emergency contact as phone
+          phone: enrollData.phone,
           avatar: enrollData.avatar
         },
         planId: enrollData.planId,
@@ -93,7 +93,8 @@ const Members: React.FC = () => {
       email: enrollData.email, 
       emergencyContact: enrollData.emergencyContact,
       address: enrollData.address,
-      avatar: enrollData.avatar
+      avatar: enrollData.avatar,
+      phone: enrollData.phone
     }, enrollData.planId, undefined, undefined, Number(enrollData.discount), enrollData.paymentMethod, enrollData.startDate);
     
     if (paymentId) {
@@ -103,7 +104,7 @@ const Members: React.FC = () => {
     setAddModalOpen(false);
     setPaymentModalOpen(false);
     setPendingEnrollment(null);
-    setEnrollData({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '', avatar: '', startDate: new Date().toISOString().split('T')[0], discount: 0, paymentMethod: 'ONLINE', transactionCode: '' });
+    setEnrollData({ name: '', email: '', planId: plans[0]?.id || '', emergencyContact: '', address: '', avatar: '', startDate: new Date().toISOString().split('T')[0], discount: 0, paymentMethod: 'ONLINE', transactionCode: '', phone: '' });
   };
 
   const handlePaymentSuccess = (paymentId: string) => {
@@ -119,6 +120,21 @@ const Members: React.FC = () => {
     }
   };
 
+  const handleDeleteMember = (member: User) => {
+    if (currentUser?.role !== UserRole.SUPER_ADMIN) {
+      showToast('Only Super Admin can delete members', 'error');
+      return;
+    }
+    if (member.id === currentUser?.id) {
+      showToast('You cannot delete your own profile', 'error');
+      return;
+    }
+    if (window.confirm(`Are you sure you want to permanently delete ${member.name}? This action cannot be undone.`)) {
+      deleteUser(member.id);
+      showToast('Member deleted successfully', 'success');
+    }
+  };
+
   const openLogs = (member: User) => {
     setSelectedMember(member);
     setActiveModal('logs');
@@ -131,7 +147,8 @@ const Members: React.FC = () => {
       email: member.email, 
       emergencyContact: member.emergencyContact || '',
       address: member.address || '',
-      avatar: member.avatar || ''
+      avatar: member.avatar || '',
+      phone: member.phone || ''
     });
     setActiveModal('manage');
   };
@@ -234,6 +251,15 @@ const Members: React.FC = () => {
                   </button>
                 )}
               </div>
+              {currentUser?.role === UserRole.SUPER_ADMIN && member.id !== currentUser?.id && (
+                <button 
+                  onClick={() => handleDeleteMember(member)}
+                  className="absolute top-4 right-4 p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Delete Member"
+                >
+                  <i className="fas fa-trash"></i>
+                </button>
+              )}
             </div>
           );
         })}
@@ -277,6 +303,13 @@ const Members: React.FC = () => {
                <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Full Name</label>
                   <input required type="text" className="w-full p-4 bg-gray-50 border rounded-xl font-bold" placeholder="Arjun Reddy" value={enrollData.name} onChange={e => setEnrollData({...enrollData, name: e.target.value})} />
+               </div>
+
+               <div className="space-y-2">
+                  <label className="text-xs font-bold text-blue-600 uppercase tracking-widest flex items-center gap-2">
+                    <i className="fas fa-mobile-screen"></i> Phone Number
+                  </label>
+                  <input type="tel" className="w-full p-4 bg-blue-50 border border-blue-100 rounded-xl font-bold text-blue-700" placeholder="+91 XXXXX XXXXX" value={enrollData.phone} onChange={e => setEnrollData({...enrollData, phone: e.target.value})} />
                </div>
 
                <div className="space-y-2">
@@ -423,6 +456,13 @@ const Members: React.FC = () => {
                <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Athlete Name</label>
                   <input required type="text" className="w-full p-4 bg-gray-50 border rounded-xl font-bold" value={manageData.name} onChange={e => setManageData({...manageData, name: e.target.value})} />
+               </div>
+
+               <div className="space-y-2">
+                  <label className="text-xs font-bold text-blue-600 uppercase tracking-widest flex items-center gap-2">
+                    <i className="fas fa-mobile-screen"></i> Phone Number
+                  </label>
+                  <input type="tel" className="w-full p-4 bg-blue-50 border border-blue-100 rounded-xl font-bold text-blue-700" value={manageData.phone} onChange={e => setManageData({...manageData, phone: e.target.value})} />
                </div>
 
                <div className="space-y-2">

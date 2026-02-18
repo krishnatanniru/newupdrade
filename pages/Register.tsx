@@ -102,7 +102,7 @@ const Register: React.FC = () => {
               <div className="bg-blue-600 p-2 rounded-xl">
                 <i className="fas fa-dumbbell text-white text-xl"></i>
               </div>
-              <span className="font-black text-xl text-white tracking-tighter uppercase">IronFlow</span>
+              <span className="font-black text-xl text-white tracking-tighter uppercase">Speed Fitness</span>
             </div>
             <h2 className="text-3xl font-black text-white uppercase tracking-tight">Start Your Journey</h2>
             <p className="text-slate-400 font-medium text-sm mt-2">Step {step} of 2: {step === 1 ? 'Choose Location' : 'Account & Access'}</p>
@@ -114,7 +114,13 @@ const Register: React.FC = () => {
               <div className="space-y-4 animate-[slideUp_0.3s_ease-out]">
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-6">Where will you be training?</p>
                 <div className="grid grid-cols-1 gap-4">
-                  {branches.map(branch => (
+                  {branches
+                    .filter(branch => {
+                      // Show branches that are marked as visible for registration
+                      // Default to true if the field doesn't exist for backward compatibility
+                      return branch.isVisibleForRegistration !== false;
+                    })
+                    .map(branch => (
                     <button
                       key={branch.id}
                       type="button"
