@@ -180,17 +180,24 @@ const Login: React.FC = () => {
     try {
       console.log('=== LOGIN DEBUG ===');
       
-      // ── Step 1: Try Supabase DB ───────────────────────────────
+      // ── Step 1: Try Supabase DB with 5s timeout ───────────────
       let dbUser: any = null;
       let dbAvailable = true;
 
       try {
-        const { data, error: dbError } = await supabase
+        // Race DB request vs. 5-second timeout
+        const dbPromise = supabase
           .from('users')
           .select('*')
           .eq('email', email.toLowerCase())
           .single();
-        
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('SUPABASE_TIMEOUT')), 5000)
+        );
+
+        const { data, error: dbError } = await Promise.race([dbPromise, timeoutPromise]) as any;
+
         console.log('DB User lookup:', data, 'error:', dbError);
 
         if (dbError) {
@@ -204,9 +211,10 @@ const Login: React.FC = () => {
         } else {
           dbUser = data;
         }
-      } catch (networkErr) {
-        // fetch failed = Supabase project deleted / no internet
-        console.warn('Supabase unreachable (project deleted?), using offline fallback');
+      } catch (networkErr: any) {
+        // fetch failed or timed out = Supabase project deleted / no internet
+        const reason = networkErr?.message === 'SUPABASE_TIMEOUT' ? 'timeout (5s)' : 'network error';
+        console.warn(`Supabase unreachable [${reason}], using offline fallback`);
         dbAvailable = false;
       }
 

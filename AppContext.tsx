@@ -210,20 +210,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const isAuthenticated = !!currentUser;
 
   const fetchData = async () => {
+    // ── Pre-load mock data immediately so the app is usable ──────
+    // This ensures users can log in even if Supabase is slow/deleted
+    if (branches.length === 0) {
+      setBranches(BRANCHES);
+      setUsers(MOCK_USERS as any);
+      setPlans(MOCK_PLANS);
+      setSubscriptions(MOCK_SUBSCRIPTIONS);
+      setOffers(MOCK_OFFERS);
+      setAttendance(MOCK_ATTENDANCE);
+      setSales(MOCK_SALES);
+      setBookings(MOCK_BOOKINGS);
+    }
+
     setGlobalLoading(true);
     try {
-      // Helper: safe fetch from supabase with network-failure guard
+      // Helper: safe fetch from supabase with 5s timeout + network-failure guard
       const safeFetch = async (table: string) => {
         try {
-          const { data, error } = await supabase.from(table).select('*');
+          const dbPromise = supabase.from(table).select('*');
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('TIMEOUT')), 5000)
+          );
+          const { data, error } = await Promise.race([dbPromise, timeoutPromise]) as any;
           if (error) throw error;
           return data;
         } catch {
-          return null; // Supabase unreachable
+          return null; // Supabase unreachable or timed out
         }
       };
 
-      // Check if Supabase is reachable by fetching branches
+      // Check if Supabase is reachable by fetching branches (5s max)
       const bData = await safeFetch('branches');
 
       if (bData === null) {
